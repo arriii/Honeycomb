@@ -1,4 +1,4 @@
-const CACHE="honeycomb-v2-camera-first";
+const CACHE="honeycomb-v2-investigate-1";
 const ASSETS=["./","./index.html","./styles.css","./app.js","./manifest.json"];
 
 self.addEventListener("install",event=>{
