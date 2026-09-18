@@ -395,6 +395,118 @@ app.post("/api/analyze-scan", rateLimit, async (req, res) => {
   }
 });
 
+
+app.post("/api/chat-scan", rateLimit, async (req, res) => {
+  if (!OPENAI_API_KEY) {
+    return res.status(503).json({
+      error: "Honeycomb Brain is not configured yet.",
+      code: "OPENAI_NOT_CONFIGURED"
+    });
+  }
+
+  const question = String(req.body?.question || "").trim().slice(0, 2500);
+  if (!question) {
+    return res.status(400).json({ error: "A follow-up question is required." });
+  }
+
+  const imageDataUrl = String(req.body?.imageDataUrl || "");
+  const context = sanitizeContext(req.body || {});
+  const scanContext = {
+    productName: String(req.body?.scanContext?.productName || "").slice(0, 240),
+    productBrand: String(req.body?.scanContext?.productBrand || "").slice(0, 180),
+    ingredients: String(req.body?.scanContext?.ingredients || "").slice(0, 5000),
+    summary: String(req.body?.scanContext?.summary || "").slice(0, 1500),
+    conclusion: String(req.body?.scanContext?.conclusion || "").slice(0, 80),
+    uncertainty: String(req.body?.scanContext?.uncertainty || "").slice(0, 1500),
+    sources: trimArray(req.body?.scanContext?.sources, 10).map(source => ({
+      title: String(source?.title || "").slice(0, 240),
+      url: String(source?.url || "").slice(0, 1000)
+    }))
+  };
+
+  const sessionRaw = String(req.headers["x-honeycomb-session"] || "anonymous");
+  const safetyIdentifier = crypto.createHash("sha256").update(sessionRaw).digest("hex").slice(0, 64);
+
+  const prompt = `
+You are Honey, the conversational assistant inside Honeycomb.
+
+The user is asking a follow-up about a scan already analyzed. Answer conversationally and specifically using the scan context, the user's saved Honeycomb context, and web search when current or missing product information would materially improve the answer.
+
+Rules:
+- Never diagnose a skin condition, allergy, or disease from an image.
+- Do not say a product caused a symptom unless the evidence actually establishes causation; normally it will not.
+- Distinguish known allergies, suspected/watching items, personal avoids, and tolerated history.
+- If asked whether something is "safe," explain the evidence and uncertainty rather than guaranteeing safety.
+- If the user says they already used the item, help connect timing/exposure to their journal and ask a useful follow-up.
+- If visible skin is relevant, use only simple non-diagnostic visual descriptions.
+- Prefer manufacturer or high-quality primary/official product sources when searching the web.
+- Do not invent ingredients, previous scans, or prior conversations.
+
+SCAN CONTEXT
+${JSON.stringify(scanContext, null, 2)}
+
+HONEYCOMB USER CONTEXT
+${JSON.stringify(context, null, 2)}
+
+USER FOLLOW-UP
+${question}
+`.trim();
+
+  const content = [{ type: "input_text", text: prompt }];
+  if (imageDataUrl.startsWith("data:image/") && imageDataUrl.length <= 10_500_000) {
+    content.push({ type: "input_image", image_url: imageDataUrl, detail: "auto" });
+  }
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        store: false,
+        safety_identifier: safetyIdentifier,
+        tools: [{ type: "web_search" }],
+        include: ["web_search_call.action.sources"],
+        input: [{ role: "user", content }]
+      })
+    });
+
+    const raw = await response.json();
+
+    if (!response.ok) {
+      console.error("OpenAI follow-up failed:", raw?.error?.type || response.status);
+      return res.status(502).json({
+        error: "Honey could not complete the follow-up.",
+        code: "OPENAI_REQUEST_FAILED"
+      });
+    }
+
+    const reply = getOutputText(raw).trim();
+    if (!reply) {
+      return res.status(502).json({
+        error: "Honey returned an empty follow-up.",
+        code: "EMPTY_MODEL_OUTPUT"
+      });
+    }
+
+    return res.json({
+      reply,
+      sources: extractSources(raw),
+      model: raw.model || MODEL,
+      responseId: raw.id || ""
+    });
+  } catch (error) {
+    console.error("Scan follow-up failed:", error?.name || "unknown_error");
+    return res.status(500).json({
+      error: "Honeycomb Brain is temporarily unavailable.",
+      code: "SERVER_ERROR"
+    });
+  }
+});
+
 app.use((err, _req, res, _next) => {
   if (String(err?.message || "").includes("Origin not allowed")) {
     return res.status(403).json({ error: "Origin not allowed." });
