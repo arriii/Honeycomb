@@ -1,4 +1,4 @@
-const CACHE="honeycomb-v2-investigate-1";
+const CACHE="honeycomb-v2-investigate-2";
 const ASSETS=["./","./index.html","./styles.css","./app.js","./manifest.json"];
 
 self.addEventListener("install",event=>{
@@ -8,7 +8,11 @@ self.addEventListener("install",event=>{
 
 self.addEventListener("activate",event=>{
   event.waitUntil(
-    caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key))))
+    caches.keys().then(keys=>Promise.all(
+      keys
+        .filter(key=>key.startsWith("honeycomb-v2-") && key!==CACHE)
+        .map(key=>caches.delete(key))
+    ))
   );
   self.clients.claim();
 });
