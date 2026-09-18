@@ -459,17 +459,10 @@ async function brandFallbackSearch(source, terms){
 }
 
 async function searchProductByText(text){
-  const terms = extractSearchTerms(text);
-  if(!terms.length) return null;
-
-  for(const source of PRODUCT_SOURCES){
-    const match = await legacyTextSearch(source, terms);
-    if(match) return match;
-  }
-  for(const source of PRODUCT_SOURCES){
-    const match = await brandFallbackSearch(source, terms);
-    if(match) return match;
-  }
+  // IMPORTANT: do not guess an exact product from fuzzy OCR text.
+  // This caused unrelated products to be returned from public databases.
+  // Exact barcode lookup is allowed locally. Open-ended product identification
+  // belongs to Honeycomb Brain (vision + web research).
   return null;
 }
 
@@ -695,10 +688,10 @@ function makeScanResult(text="", photo="", meta={}){
     }
     confidence = Math.max(confidence, p.ingredients ? 74 : 62);
   }else if(meta.ocrText){
-    summary = "I could read some packaging text, but I could not verify the exact product in the public product databases. Try the barcode or back label for a stronger match.";
+    summary = "I could read some packaging text, but I could not verify the exact product. I am not going to guess. Try the barcode or back label, or connect Honeycomb Brain for vision + web research.";
     confidence = Math.max(confidence, Math.min(58, 30 + Math.round((meta.ocrConfidence || 0) / 5)));
     uncertainty = "The text came from OCR and the exact product was not independently verified.";
-    connection = meta.ocrText.slice(0,100).replace(/\s+/g," ");
+    connection = "No verified profile connection";
   }else if(!text){
     summary = activeMode === "Flare-up"
       ? "I captured the image for your history, but this prototype cannot diagnose a skin condition from a photo."
@@ -774,7 +767,7 @@ function scanIntroMessage(result){
     if(result.ingredients) parts.push("I pulled a listed ingredient record and compared it with your Hive.");
     else parts.push("The product record did not include a complete ingredient list, so I’m keeping the result cautious.");
   }else if(result.ocrText){
-    parts.push("I could read some text, but I could not independently verify the exact product yet.");
+    parts.push("I could read some text, but I could not verify the exact product, so I am not going to guess.");
   }else{
     parts.push("I could not reliably identify the product from this image yet.");
   }
@@ -869,6 +862,10 @@ async function investigateScan(photo, manualText=""){
     }
   }
 
+  if(!BRAIN_API_BASE){
+    setInvestigationStep("brain","Honeycomb Brain is not connected yet","This preview can use barcode + OCR only. Vision + real web research turns on after the secure backend is deployed.","failed");
+  }
+
   const productCapable = ["Auto","Label","Food","Product","Cosmetic"].includes(activeMode);
   let barcode = "";
   let product = null;
@@ -915,8 +912,8 @@ async function investigateScan(photo, manualText=""){
     product = await searchProductByText(ocrText);
     if(myRun !== investigationRun) return;
     setInvestigationStep("web",
-      product ? "Probable product match found" : "No verified product match yet",
-      product ? (product.name + " · " + product.sourceName) : "Open-ended web search still needs the future secure Honeycomb backend.",
+      product ? "Exact product record found" : "No exact product match",
+      product ? (product.name + " · " + product.sourceName) : "I will not guess from fuzzy OCR. Vision + web research requires Honeycomb Brain.",
       product ? "done" : "failed"
     );
   }
