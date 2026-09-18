@@ -158,18 +158,17 @@ function captureFrame(){
   const video = $("#camera");
   if(!cameraReady || !video.videoWidth) return "";
 
+  // Keep the whole visible frame so brand names at the edges do not get cropped out.
   const vw = video.videoWidth;
   const vh = video.videoHeight;
-  const side = Math.floor(Math.min(vw, vh) * 0.82);
-  const sx = Math.max(0, Math.floor((vw - side) / 2));
-  const sy = Math.max(0, Math.floor((vh - side) / 2));
+  const maxSide = 1600;
+  const scale = Math.min(1, maxSide / Math.max(vw, vh));
 
   const c = document.createElement("canvas");
-  const target = Math.min(1200, side);
-  c.width = target;
-  c.height = target;
-  c.getContext("2d").drawImage(video, sx, sy, side, side, 0, 0, target, target);
-  return c.toDataURL("image/jpeg",0.88);
+  c.width = Math.round(vw * scale);
+  c.height = Math.round(vh * scale);
+  c.getContext("2d").drawImage(video, 0, 0, vw, vh, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg",0.9);
 }
 
 function setInvestigationStep(id, title, detail="", status="active"){
@@ -294,7 +293,7 @@ async function lookupByBarcode(code){
 const SEARCH_STOPWORDS = new Set([
   "the","and","for","with","from","this","that","your","you","new","net","wt","oz","fl","ml","made","use","directions",
   "warning","ingredients","ingredient","active","inactive","keep","out","reach","children","tube","paste","product",
-  "mint","fresh","white","whitening","toothpaste","label","scan","front","back"
+  "fresh","label","scan","front","back"
 ]);
 
 function extractSearchTerms(text){
@@ -462,24 +461,33 @@ function makeScanResult(text="", photo="", meta={}){
     connection = matches.tolerated.join(", ");
     uncertainty = "Past tolerance does not guarantee future tolerance.";
   }else if(text){
-    headline = "No identified conflict";
-    signal = "NO PROFILE MATCH";
-    summary = "Honeycomb did not find a match in your current known, watching, or personal-avoid lists.";
-    confidence = 48;
-    uncertainty = "No profile match does not mean the item is guaranteed safe.";
+    // Text alone is not enough to clear a product. Keep the result cautious until
+    // Honeycomb verifies an exact product and, ideally, an ingredient list.
+    headline = "Needs a closer look";
+    signal = "UNVERIFIED";
+    summary = "Honeycomb did not find a direct match in your saved profile, but the exact product or ingredient list is not fully verified yet.";
+    confidence = 40;
+    uncertainty = "Readable text without an exact product match is not enough to conclude there is no conflict.";
   }
 
   if(meta.product){
     const p = meta.product;
-    if(signal === "NO PROFILE MATCH"){
-      summary = "I identified " + p.name + (p.brands ? " by " + p.brands : "") + " and checked the listed product information against your Hive. I did not find a saved-profile conflict.";
-    }else if(signal === "UNCERTAIN"){
-      summary = "I found a probable product match for " + p.name + ", but there is not enough verified ingredient information to finish the comparison.";
+    if(!matches.known.length && !matches.avoid.length && !matches.suspected.length && !matches.tolerated.length){
+      if(p.ingredients){
+        headline = "No identified conflict";
+        signal = "NO PROFILE MATCH";
+        summary = "I identified " + p.name + (p.brands ? " by " + p.brands : "") + " and compared the listed ingredients with your current Hive. I did not find a saved-profile conflict.";
+        uncertainty = "No saved-profile match does not guarantee that the product will be safe for you.";
+      }else{
+        headline = "Needs a closer look";
+        signal = "PRODUCT FOUND";
+        summary = "I found a probable match for " + p.name + ", but the public record did not include enough ingredient information to complete the comparison.";
+        uncertainty = "The product identity is stronger than the ingredient evidence.";
+      }
     }else{
       summary = "For " + p.name + ": " + summary;
     }
     confidence = Math.max(confidence, p.ingredients ? 74 : 62);
-    uncertainty = p.ingredients ? uncertainty : "The product match is stronger than the ingredient evidence; the database did not provide a complete ingredient list.";
   }else if(meta.ocrText){
     summary = "I could read some packaging text, but I could not verify the exact product in the public product databases. Try the barcode or back label for a stronger match.";
     confidence = Math.max(confidence, Math.min(58, 30 + Math.round((meta.ocrConfidence || 0) / 5)));
@@ -1093,7 +1101,12 @@ function boot(){
     startCamera();
   }
   if("serviceWorker" in navigator){
-    navigator.serviceWorker.register("service-worker.js").catch(() => {});
+    // The /v2/ preview should always show the newest build while we iterate.
+    if(location.pathname.includes("/v2/")){
+      navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister())).catch(() => {});
+    }else{
+      navigator.serviceWorker.register("service-worker.js").catch(() => {});
+    }
   }
 }
 boot();
