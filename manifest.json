@@ -1,0 +1,9 @@
+{
+  "name": "Honeycomb",
+  "short_name": "Honeycomb",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#15110b",
+  "theme_color": "#e8a62e",
+  "description": "Personal exposure intelligence."
+}
