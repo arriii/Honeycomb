@@ -2,6 +2,8 @@
 const KEY = "honeycombV2";
 const OLD_KEY = "honeycombPrototypeV1";
 const MODES = ["Auto","Label","Food","Product","Cosmetic","Fabric","Plant","Flare-up"];
+const BRAIN_API_BASE = String((window.HONEYCOMB_CONFIG && window.HONEYCOMB_CONFIG.apiBase) || "").replace(/\/+$/,"");
+const SESSION_KEY = "honeycombSessionId";
 
 const PRODUCT_SOURCES = [
   {name:"Open Food Facts", base:"https://world.openfoodfacts.org"},
@@ -15,6 +17,105 @@ const esc = (s="") => String(s).replace(/[&<>"']/g, (m) => ({"&":"&amp;","<":"&l
 const list = (v="") => String(v).split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
 const now = () => new Date().toLocaleString([], {dateStyle:"medium", timeStyle:"short"});
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+function getSessionId(){
+  let id = localStorage.getItem(SESSION_KEY);
+  if(!id){
+    id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ("hc-" + Date.now() + "-" + Math.random().toString(36).slice(2));
+    localStorage.setItem(SESSION_KEY,id);
+  }
+  return id;
+}
+
+async function sourceToDataUrl(source){
+  if(!source) return "";
+  if(source.startsWith("data:image/")) return source;
+  try{
+    const response = await fetch(source);
+    const blob = await response.blob();
+    return await new Promise((resolve,reject)=>{
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }catch(e){
+    return "";
+  }
+}
+
+async function callBrainScan(photo){
+  if(!BRAIN_API_BASE) return null;
+  const imageDataUrl = await sourceToDataUrl(photo);
+  if(!imageDataUrl) return null;
+
+  const response = await fetch(BRAIN_API_BASE + "/api/analyze-scan",{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "X-Honeycomb-Session":getSessionId()
+    },
+    body:JSON.stringify({
+      imageDataUrl,
+      mode:activeMode,
+      profile:state.profile,
+      recentScans:(state.scans || []).slice(-10),
+      recentReactions:(state.reactions || []).slice(-10),
+      recentChat:(state.chat || []).slice(-12)
+    })
+  });
+
+  if(!response.ok){
+    let message = "Honeycomb Brain could not analyze this scan.";
+    try{
+      const err = await response.json();
+      if(err && err.error) message = err.error;
+    }catch(e){}
+    throw new Error(message);
+  }
+  return await response.json();
+}
+
+async function callBrainFollowup(question){
+  if(!BRAIN_API_BASE || !pendingScan) return null;
+  const imageDataUrl = pendingScan.photo ? await sourceToDataUrl(pendingScan.photo) : "";
+
+  const response = await fetch(BRAIN_API_BASE + "/api/chat-scan",{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "X-Honeycomb-Session":getSessionId()
+    },
+    body:JSON.stringify({
+      question,
+      imageDataUrl,
+      mode:pendingScan.mode || activeMode,
+      scanContext:{
+        productName:pendingScan.productName || "",
+        productBrand:pendingScan.productBrand || "",
+        ingredients:pendingScan.ingredients || "",
+        summary:pendingScan.summary || "",
+        conclusion:pendingScan.signal || "",
+        uncertainty:pendingScan.uncertainty || "",
+        sources:pendingScan.webSources || []
+      },
+      profile:state.profile,
+      recentScans:(state.scans || []).slice(-10),
+      recentReactions:(state.reactions || []).slice(-10),
+      recentChat:(state.chat || []).slice(-12)
+    })
+  });
+
+  if(!response.ok){
+    let message = "Honey could not answer that follow-up.";
+    try{
+      const err = await response.json();
+      if(err && err.error) message = err.error;
+    }catch(e){}
+    throw new Error(message);
+  }
+  return await response.json();
+}
 
 function defaultState(){
   return {
@@ -428,6 +529,111 @@ function findMemoryMatches(product, text){
   return {hasMatch:false,title:"",text:"",scanCount:0,chatCount:0};
 }
 
+function resultFromBrain(payload, photo){
+  const a = payload && payload.analysis ? payload.analysis : {};
+  const id = a.identification || {};
+  const research = a.research || {};
+  const profile = a.profile_analysis || {};
+  const memoryAnalysis = a.memory_analysis || {};
+  const conversation = a.conversation || {};
+  const visible = a.visible_person_context || {};
+  const quality = a.image_quality || {};
+
+  const conclusion = profile.conclusion || "insufficient";
+  const headlineMap = {
+    conflict:"Conflict found",
+    closer_look:"Needs a closer look",
+    no_identified_conflict:"No identified conflict",
+    insufficient:"Needs a closer look"
+  };
+  const signalMap = {
+    conflict:"PROFILE MATCH",
+    closer_look:"NEEDS REVIEW",
+    no_identified_conflict:"NO PROFILE MATCH",
+    insufficient:"INSUFFICIENT"
+  };
+
+  const matchGroups = []
+    .concat(profile.known_matches || [])
+    .concat(profile.watching_matches || [])
+    .concat(profile.avoid_matches || [])
+    .concat(profile.tolerated_matches || []);
+
+  const memoryBits = []
+    .concat(memoryAnalysis.previous_scan_matches || [])
+    .concat(memoryAnalysis.chat_matches || [])
+    .concat(memoryAnalysis.reaction_matches || []);
+
+  const visibleNotes = visible.person_visible && Array.isArray(visible.non_diagnostic_observations)
+    ? visible.non_diagnostic_observations.filter(Boolean)
+    : [];
+
+  let opening = String(conversation.opening_message || "").trim();
+  if(visibleNotes.length){
+    opening += (opening ? " " : "") + "Visible context: " + visibleNotes.join(" ");
+  }
+  if(conversation.follow_up_question){
+    opening += (opening ? " " : "") + conversation.follow_up_question;
+  }
+
+  const ingredients = String(research.ingredient_text || "").trim() ||
+    ((research.ingredients || []).join(", "));
+
+  return {
+    id:Date.now(),
+    mode:activeMode,
+    text:(a.visible_text || []).join("\n").slice(0,2500),
+    ocrText:(a.visible_text || []).join("\n").slice(0,2000),
+    photo:photo && photo.startsWith("data:") ? photo : "",
+    headline:headlineMap[conclusion] || "Needs a closer look",
+    summary:String(profile.explanation || research.research_summary || conversation.opening_message || "Honeycomb completed an AI-assisted review."),
+    signal:signalMap[conclusion] || "INSUFFICIENT",
+    confidence:Math.max(0,Math.min(100,Number(id.confidence || 0))),
+    connection:matchGroups.length ? matchGroups.join(", ") : "No direct saved-profile match",
+    uncertainty:(a.limitations || []).join(" ") || quality.notes || "Product and health information may still be incomplete.",
+    time:now(),
+    saved:false,
+    productName:String(id.product_name || ""),
+    productBrand:String(id.brand || ""),
+    productCode:String(id.barcode || ""),
+    ingredients,
+    productImage:"",
+    sourceName:(payload.sources && payload.sources[0] && payload.sources[0].title) || "Web research",
+    sourceUrl:(payload.sources && payload.sources[0] && payload.sources[0].url) || "",
+    webSources:Array.isArray(payload.sources) ? payload.sources : [],
+    memory:memoryBits.length ? {
+      hasMatch:true,
+      title:"Honeycomb remembers related context.",
+      text:String(memoryAnalysis.summary || memoryBits.join(" ")),
+      scanCount:(memoryAnalysis.previous_scan_matches || []).length,
+      chatCount:(memoryAnalysis.chat_matches || []).length
+    } : {hasMatch:false,title:"",text:"",scanCount:0,chatCount:0},
+    aiOpeningMessage:opening,
+    scanConversation:[],
+    brainPowered:true
+  };
+}
+
+function renderSources(result){
+  const box = $("#webSources");
+  const sources = Array.isArray(result.webSources) ? result.webSources.filter(s => s && s.url) : [];
+  if(!sources.length){
+    box.classList.add("hidden");
+    $("#sourceList").innerHTML = "";
+    $("#sourceCount").textContent = "";
+    return;
+  }
+  box.classList.remove("hidden");
+  $("#sourceCount").textContent = sources.length + " source" + (sources.length === 1 ? "" : "s");
+  $("#sourceList").innerHTML = sources.slice(0,8).map((source,i)=>{
+    let host = "";
+    try{ host = new URL(source.url).hostname.replace(/^www\./,""); }catch(e){}
+    return '<a class="source-item" href="' + esc(source.url) + '" target="_blank" rel="noopener">' +
+      '<span class="source-num">' + (i+1) + '</span><span><strong>' + esc(source.title || host || "Source") +
+      '</strong><small>' + esc(host || source.url) + '</small></span></a>';
+  }).join("");
+}
+
 function makeScanResult(text="", photo="", meta={}){
   const matches = compareProfile(text);
 
@@ -561,6 +767,7 @@ function renderMemory(result){
 }
 
 function scanIntroMessage(result){
+  if(result.aiOpeningMessage) return result.aiOpeningMessage;
   const parts = [];
   if(result.productName){
     parts.push("I found a probable match for " + result.productName + (result.productBrand ? " by " + result.productBrand : "") + ".");
@@ -583,7 +790,7 @@ function scanIntroMessage(result){
 function renderScanConversation(){
   const wrap = $("#scanConversationMessages");
   const msgs = pendingScan && pendingScan.scanConversation ? pendingScan.scanConversation : [];
-  wrap.innerHTML = msgs.map(m => '<div class="scan-msg ' + (m.role === "user" ? "user" : "honey") + '">' + esc(m.text) + '</div>').join("");
+  wrap.innerHTML = msgs.map(m => '<div class="scan-msg ' + (m.role === "user" ? "user" : "honey") + (m.thinking ? " thinking" : "") + '">' + esc(m.text) + '</div>').join("");
   wrap.scrollTop = wrap.scrollHeight;
 }
 
@@ -622,6 +829,7 @@ function openResult(result){
   }
 
   renderProductCard(result);
+  renderSources(result);
   renderMemory(result);
   $("#whyFlaggedPanel").classList.remove("open");
   $("#saveScanBtn").textContent = result.saved ? "Saved" : "Save";
@@ -640,6 +848,26 @@ function openResult(result){
 async function investigateScan(photo, manualText=""){
   const myRun = ++investigationRun;
   beginInvestigation(photo);
+
+  if(BRAIN_API_BASE && photo && !manualText){
+    setInvestigationStep("brain","Honey Vision + web research","Identifying the item, searching the web, checking sources, and comparing your Hive…","active");
+    try{
+      const brainPayload = await callBrainScan(photo);
+      if(myRun !== investigationRun) return;
+      if(brainPayload && brainPayload.analysis){
+        setInvestigationStep("brain","Honeycomb Brain finished","Vision, web research, Hive, and memory analysis complete.","done");
+        await sleep(180);
+        if(myRun !== investigationRun) return;
+        openResult(resultFromBrain(brainPayload,photo));
+        return;
+      }
+      setInvestigationStep("brain","AI analysis unavailable","Falling back to on-device barcode/OCR tools.","failed");
+    }catch(error){
+      if(myRun !== investigationRun) return;
+      setInvestigationStep("brain","AI analysis unavailable",String(error.message || "Using browser fallback."),"failed");
+      await sleep(160);
+    }
+  }
 
   const productCapable = ["Auto","Label","Food","Product","Cosmetic"].includes(activeMode);
   let barcode = "";
@@ -917,22 +1145,59 @@ function scanFollowupReply(q){
   return "I’m keeping this product, its source, your Hive comparison, and this conversation together. You can ask me about the ingredient list, whether you’ve scanned it before, or tell me what happened after you used it.";
 }
 
-function sendScanFollowup(){
+async function sendScanFollowup(){
   const input = $("#scanFollowupInput");
   const q = String(input.value || "").trim();
   if(!q || !pendingScan) return;
+
   pendingScan.scanConversation = pendingScan.scanConversation || [];
   pendingScan.scanConversation.push({role:"user",text:q});
-  const reply = scanFollowupReply(q);
-  pendingScan.scanConversation.push({role:"ai",text:reply});
   input.value = "";
+
+  if(BRAIN_API_BASE){
+    const thinking = {role:"ai",text:"Honey is checking the scan context and sources…",thinking:true};
+    pendingScan.scanConversation.push(thinking);
+    renderScanConversation();
+
+    try{
+      const payload = await callBrainFollowup(q);
+      const idx = pendingScan.scanConversation.indexOf(thinking);
+      if(idx >= 0) pendingScan.scanConversation.splice(idx,1);
+      const reply = payload && payload.reply ? payload.reply : scanFollowupReply(q);
+      pendingScan.scanConversation.push({role:"ai",text:reply});
+
+      if(payload && Array.isArray(payload.sources) && payload.sources.length){
+        const existing = pendingScan.webSources || [];
+        const seen = new Set(existing.map(s => s.url));
+        payload.sources.forEach(s => { if(s && s.url && !seen.has(s.url)){ existing.push(s); seen.add(s.url); } });
+        pendingScan.webSources = existing.slice(0,12);
+        renderSources(pendingScan);
+      }
+
+      state.chat.push({role:"user",text:"Scan follow-up about " + (pendingScan.productName || pendingScan.mode) + ": " + q,time:now()});
+      state.chat.push({role:"ai",text:reply,time:now()});
+    }catch(error){
+      const idx = pendingScan.scanConversation.indexOf(thinking);
+      if(idx >= 0) pendingScan.scanConversation.splice(idx,1);
+      const reply = scanFollowupReply(q);
+      pendingScan.scanConversation.push({role:"ai",text:reply});
+      pendingScan.scanConversation.push({role:"ai",text:"The live Honeycomb Brain connection was unavailable, so I answered using the local scan context."});
+      state.chat.push({role:"user",text:"Scan follow-up about " + (pendingScan.productName || pendingScan.mode) + ": " + q,time:now()});
+      state.chat.push({role:"ai",text:reply,time:now()});
+    }
+  }else{
+    const reply = scanFollowupReply(q);
+    pendingScan.scanConversation.push({role:"ai",text:reply});
+    state.chat.push({role:"user",text:"Scan follow-up about " + (pendingScan.productName || pendingScan.mode) + ": " + q,time:now()});
+    state.chat.push({role:"ai",text:reply,time:now()});
+  }
+
   renderScanConversation();
-
-  state.chat.push({role:"user",text:"Scan follow-up about " + (pendingScan.productName || pendingScan.mode) + ": " + q,time:now()});
-  state.chat.push({role:"ai",text:reply,time:now()});
-
   const stored = state.scans.find(s => s.id === pendingScan.id);
-  if(stored) stored.scanConversation = pendingScan.scanConversation.slice();
+  if(stored){
+    stored.scanConversation = pendingScan.scanConversation.slice();
+    stored.webSources = (pendingScan.webSources || []).slice();
+  }
   saveQuietly();
   renderChat();
 }
