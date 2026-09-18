@@ -3,11 +3,18 @@ const KEY = "honeycombV2";
 const OLD_KEY = "honeycombPrototypeV1";
 const MODES = ["Auto","Label","Food","Product","Cosmetic","Fabric","Plant","Flare-up"];
 
+const PRODUCT_SOURCES = [
+  {name:"Open Food Facts", base:"https://world.openfoodfacts.org"},
+  {name:"Open Beauty Facts", base:"https://world.openbeautyfacts.org"},
+  {name:"Open Products Facts", base:"https://world.openproductsfacts.org"}
+];
+
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 const esc = (s="") => String(s).replace(/[&<>"']/g, (m) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
 const list = (v="") => String(v).split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
 const now = () => new Date().toLocaleString([], {dateStyle:"medium", timeStyle:"short"});
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 function defaultState(){
   return {
@@ -24,7 +31,14 @@ function defaultState(){
 function migrate(){
   const current = localStorage.getItem(KEY);
   if(current){
-    try { return JSON.parse(current); } catch(e){}
+    try {
+      const parsed = JSON.parse(current);
+      parsed.scans = parsed.scans || [];
+      parsed.reactions = parsed.reactions || [];
+      parsed.chat = parsed.chat || [];
+      parsed.records = parsed.records || [];
+      return parsed;
+    } catch(e){}
   }
   const old = localStorage.getItem(OLD_KEY);
   if(!old) return defaultState();
@@ -54,10 +68,15 @@ let stream = null;
 let cameraReady = false;
 let latestPhotoUrl = "";
 let pendingScan = null;
+let investigationRun = 0;
 
 function save(){
   localStorage.setItem(KEY, JSON.stringify(state));
   renderAll();
+}
+
+function saveQuietly(){
+  localStorage.setItem(KEY, JSON.stringify(state));
 }
 
 function showOnboardingStep(id){
@@ -94,7 +113,7 @@ function toast(msg){
   el.textContent = msg;
   el.classList.add("show");
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => el.classList.remove("show"), 1500);
+  toast.timer = setTimeout(() => el.classList.remove("show"), 1700);
 }
 
 async function startCamera(){
@@ -112,6 +131,7 @@ async function startCamera(){
     $("#camera").srcObject = stream;
     await $("#camera").play();
     cameraReady = true;
+    latestPhotoUrl = "";
     $("#cameraFallback").classList.remove("show");
     $("#camera").style.opacity = "1";
     toast("Camera ready");
@@ -124,110 +144,464 @@ async function startCamera(){
 
 function showUploaded(file){
   if(!file) return;
-  if(latestPhotoUrl) URL.revokeObjectURL(latestPhotoUrl);
+  if(latestPhotoUrl && latestPhotoUrl.startsWith("blob:")) URL.revokeObjectURL(latestPhotoUrl);
   latestPhotoUrl = URL.createObjectURL(file);
   $("#cameraFallback").classList.add("show");
   const photo = $("#cameraFallback .fallback-photo");
   if(photo) photo.style.backgroundImage = 'url("' + latestPhotoUrl + '")';
   $("#camera").style.opacity = "0";
-  toast("Photo ready");
+  toast("Photo ready — tap scan");
 }
 
 function captureFrame(){
   if(latestPhotoUrl) return latestPhotoUrl;
-  if(!cameraReady || !$("#camera").videoWidth) return "";
+  const video = $("#camera");
+  if(!cameraReady || !video.videoWidth) return "";
+
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const side = Math.floor(Math.min(vw, vh) * 0.82);
+  const sx = Math.max(0, Math.floor((vw - side) / 2));
+  const sy = Math.max(0, Math.floor((vh - side) / 2));
+
   const c = document.createElement("canvas");
-  c.width = $("#camera").videoWidth;
-  c.height = $("#camera").videoHeight;
-  c.getContext("2d").drawImage($("#camera"),0,0,c.width,c.height);
-  return c.toDataURL("image/jpeg",0.86);
+  const target = Math.min(1200, side);
+  c.width = target;
+  c.height = target;
+  c.getContext("2d").drawImage(video, sx, sy, side, side, 0, 0, target, target);
+  return c.toDataURL("image/jpeg",0.88);
 }
 
-function makeScanResult(text="", photo=""){
+function setInvestigationStep(id, title, detail="", status="active"){
+  const wrap = $("#investigationSteps");
+  let row = wrap.querySelector('[data-step="' + id + '"]');
+  if(!row){
+    row = document.createElement("div");
+    row.className = "investigation-step";
+    row.dataset.step = id;
+    row.innerHTML = '<div class="step-dot">•</div><div><strong></strong><small></small></div>';
+    wrap.appendChild(row);
+  }
+  row.classList.remove("active","done","failed");
+  row.classList.add(status);
+  row.querySelector("strong").textContent = title;
+  row.querySelector("small").textContent = detail;
+  row.querySelector(".step-dot").textContent = status === "done" ? "✓" : status === "failed" ? "–" : "•";
+}
+
+function beginInvestigation(photo){
+  pendingScan = null;
+  $("#resultLayer").classList.add("open");
+  $("#resultLayer").setAttribute("aria-hidden","false");
+  $(".result-sheet").classList.add("busy");
+  $("#investigationPanel").classList.remove("hidden");
+  $("#resultContent").classList.add("hidden");
+  $("#investigationSteps").innerHTML = "";
+  $("#investigationTitle").textContent = "Looking at your scan…";
+  $("#investigationHint").textContent = "Honeycomb is checking the image, public product databases, and what this browser remembers.";
+  $("#resultModeLabel").textContent = activeMode.toUpperCase() + " · INVESTIGATING";
+  setInvestigationStep("capture","Image captured","Starting analysis…","done");
+
+  const rp = $("#resultPhoto");
+  if(photo){
+    rp.style.backgroundImage = 'url("' + photo + '")';
+    rp.classList.remove("hidden");
+  }else{
+    rp.classList.add("hidden");
+  }
+}
+
+function closeResult(){
+  investigationRun += 1;
+  $("#resultLayer").classList.remove("open");
+  $("#resultLayer").setAttribute("aria-hidden","true");
+  $(".result-sheet").classList.remove("busy");
+}
+
+async function fetchJson(url, timeoutMs=7000){
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try{
+    const response = await fetch(url, {signal:controller.signal, headers:{"Accept":"application/json"}});
+    if(!response.ok) return null;
+    return await response.json();
+  }catch(e){
+    return null;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+async function imageSourceToBitmap(source){
+  if(!source || !window.createImageBitmap) return null;
+  try{
+    const response = await fetch(source);
+    const blob = await response.blob();
+    return await createImageBitmap(blob);
+  }catch(e){
+    return null;
+  }
+}
+
+async function detectBarcode(source){
+  if(!source || !("BarcodeDetector" in window)) return "";
+  try{
+    const formats = await BarcodeDetector.getSupportedFormats();
+    const preferred = ["ean_13","ean_8","upc_a","upc_e","code_128","qr_code"].filter(x => formats.includes(x));
+    const detector = preferred.length ? new BarcodeDetector({formats:preferred}) : new BarcodeDetector();
+    const bitmap = await imageSourceToBitmap(source);
+    if(!bitmap) return "";
+    const found = await detector.detect(bitmap);
+    if(bitmap.close) bitmap.close();
+    return found && found[0] ? String(found[0].rawValue || "").trim() : "";
+  }catch(e){
+    return "";
+  }
+}
+
+function normalizeProduct(product, source, code=""){
+  if(!product) return null;
+  const productName = product.product_name || product.product_name_en || product.generic_name || "";
+  const brands = product.brands || "";
+  const ingredients = product.ingredients_text || product.ingredients_text_en || "";
+  const barcode = String(product.code || code || "");
+  if(!productName && !brands && !barcode) return null;
+  return {
+    code:barcode,
+    name:productName || (brands ? brands + " product" : "Product " + barcode),
+    brands:brands,
+    ingredients:ingredients,
+    image:product.image_front_url || product.image_url || "",
+    sourceName:source.name,
+    sourceBase:source.base,
+    sourceUrl:barcode ? source.base + "/product/" + encodeURIComponent(barcode) : source.base
+  };
+}
+
+async function lookupByBarcode(code){
+  if(!code) return null;
+  const fields = "code,product_name,product_name_en,brands,ingredients_text,ingredients_text_en,image_front_url,image_url";
+  for(const source of PRODUCT_SOURCES){
+    const url = source.base + "/api/v2/product/" + encodeURIComponent(code) + ".json?fields=" + fields;
+    const data = await fetchJson(url);
+    if(data && data.status === 1 && data.product){
+      return normalizeProduct(data.product, source, code);
+    }
+  }
+  return null;
+}
+
+const SEARCH_STOPWORDS = new Set([
+  "the","and","for","with","from","this","that","your","you","new","net","wt","oz","fl","ml","made","use","directions",
+  "warning","ingredients","ingredient","active","inactive","keep","out","reach","children","tube","paste","product",
+  "mint","fresh","white","whitening","toothpaste","label","scan","front","back"
+]);
+
+function extractSearchTerms(text){
+  const words = String(text || "")
+    .replace(/[^a-zA-Z0-9\s-]/g," ")
+    .split(/\s+/)
+    .map(w => w.trim())
+    .filter(w => w.length >= 3 && !SEARCH_STOPWORDS.has(w.toLowerCase()));
+  const unique = [];
+  const seen = new Set();
+  for(const w of words){
+    const low = w.toLowerCase();
+    if(!seen.has(low)){
+      seen.add(low);
+      unique.push(w);
+    }
+    if(unique.length >= 7) break;
+  }
+  return unique;
+}
+
+function scoreProduct(product, terms){
+  const hay = ((product.product_name || "") + " " + (product.brands || "")).toLowerCase();
+  let score = 0;
+  terms.forEach((t,i) => {
+    if(hay.includes(t.toLowerCase())) score += Math.max(1, 7 - i);
+  });
+  return score;
+}
+
+async function legacyTextSearch(source, terms){
+  if(!terms.length) return null;
+  const query = terms.join(" ");
+  const url = source.base + "/cgi/search.pl?search_terms=" + encodeURIComponent(query) +
+    "&search_simple=1&action=process&json=1&page_size=8";
+  const data = await fetchJson(url, 9000);
+  if(!data || !Array.isArray(data.products) || !data.products.length) return null;
+  const ranked = data.products
+    .map(p => ({product:p, score:scoreProduct(p, terms)}))
+    .sort((a,b) => b.score - a.score);
+  if(!ranked[0] || ranked[0].score < 2) return null;
+  return normalizeProduct(ranked[0].product, source);
+}
+
+async function brandFallbackSearch(source, terms){
+  if(!terms.length) return null;
+  const fields = "code,product_name,product_name_en,brands,ingredients_text,ingredients_text_en,image_front_url,image_url";
+  for(const term of terms.slice(0,3)){
+    const tag = term.toLowerCase().replace(/[^a-z0-9-]/g,"");
+    if(!tag) continue;
+    const url = source.base + "/api/v2/search?brands_tags=" + encodeURIComponent(tag) +
+      "&page=1&page_size=6&fields=" + fields;
+    const data = await fetchJson(url, 7000);
+    if(data && Array.isArray(data.products) && data.products.length){
+      const ranked = data.products
+        .map(p => ({product:p, score:scoreProduct(p, terms)}))
+        .sort((a,b) => b.score - a.score);
+      if(ranked[0] && ranked[0].score >= 2) return normalizeProduct(ranked[0].product, source);
+    }
+  }
+  return null;
+}
+
+async function searchProductByText(text){
+  const terms = extractSearchTerms(text);
+  if(!terms.length) return null;
+
+  for(const source of PRODUCT_SOURCES){
+    const match = await legacyTextSearch(source, terms);
+    if(match) return match;
+  }
+  for(const source of PRODUCT_SOURCES){
+    const match = await brandFallbackSearch(source, terms);
+    if(match) return match;
+  }
+  return null;
+}
+
+async function runOCR(photo, runId){
+  if(!photo || !window.Tesseract || typeof window.Tesseract.recognize !== "function") return {text:"",confidence:0};
+  try{
+    const result = await window.Tesseract.recognize(photo, "eng", {
+      logger:(m) => {
+        if(runId !== investigationRun) return;
+        if(m.status === "recognizing text" && typeof m.progress === "number"){
+          $("#investigationHint").textContent = "Reading visible packaging text… " + Math.round(m.progress * 100) + "%";
+        }
+      }
+    });
+    return {
+      text:(result && result.data && result.data.text ? result.data.text : "").trim(),
+      confidence:Number(result && result.data && result.data.confidence || 0)
+    };
+  }catch(e){
+    return {text:"",confidence:0};
+  }
+}
+
+function compareProfile(text){
   const p = state.profile;
-  const hay = text.toLowerCase();
+  const hay = String(text || "").toLowerCase();
   const known = list(p.known).filter(x => hay.includes(x.toLowerCase()));
   const suspected = list(p.suspected).filter(x => hay.includes(x.toLowerCase()));
   const avoid = list(p.avoid).filter(x => hay.includes(x.toLowerCase()));
   const tolerated = list(p.tolerated).filter(x => hay.includes(x.toLowerCase()));
+  return {known,suspected,avoid,tolerated};
+}
+
+function findMemoryMatches(product, text){
+  const name = product && product.name ? product.name.toLowerCase() : "";
+  const code = product && product.code ? String(product.code) : "";
+  const terms = extractSearchTerms((product ? (product.name + " " + product.brands) : "") || text).slice(0,4).map(x => x.toLowerCase());
+
+  const previousScans = (state.scans || []).filter(s => {
+    if(code && s.productCode && String(s.productCode) === code) return true;
+    const hay = ((s.productName || "") + " " + (s.text || "")).toLowerCase();
+    if(name && s.productName && s.productName.toLowerCase() === name) return true;
+    return terms.length >= 2 && terms.filter(t => hay.includes(t)).length >= 2;
+  });
+
+  const chatHits = (state.chat || []).filter(m => {
+    const hay = String(m.text || "").toLowerCase();
+    return terms.length >= 2 && terms.filter(t => hay.includes(t)).length >= 2;
+  });
+
+  if(previousScans.length || chatHits.length){
+    const bits = [];
+    if(previousScans.length) bits.push("You have scanned something matching this " + previousScans.length + " time" + (previousScans.length === 1 ? "" : "s") + " before.");
+    if(chatHits.length) bits.push("It also appears in " + chatHits.length + " saved Honey conversation" + (chatHits.length === 1 ? "" : "s") + ".");
+    return {hasMatch:true,title:"Honeycomb remembers this.",text:bits.join(" "),scanCount:previousScans.length,chatCount:chatHits.length};
+  }
+  return {hasMatch:false,title:"",text:"",scanCount:0,chatCount:0};
+}
+
+function makeScanResult(text="", photo="", meta={}){
+  const matches = compareProfile(text);
 
   let headline = "Needs a closer look";
   let summary = "Honeycomb does not have enough verified information to call this a conflict or a non-conflict.";
   let signal = "UNCERTAIN";
-  let confidence = text ? 42 : 28;
+  let confidence = text ? 42 : 26;
   let connection = "No direct profile match";
-  let uncertainty = text ? "Product/source details may be incomplete" : "Image understanding is not connected yet";
+  let uncertainty = text ? "Product/source details may be incomplete" : "Not enough verified product information";
 
-  if(known.length || avoid.length){
-    const matches = Array.from(new Set(known.concat(avoid)));
+  if(matches.known.length || matches.avoid.length){
+    const direct = Array.from(new Set(matches.known.concat(matches.avoid)));
     headline = "Conflict found";
     signal = "PROFILE MATCH";
-    summary = "Honeycomb found " + matches.join(", ") + " in the text you provided and it overlaps with your known or personal-avoid profile.";
-    confidence = Math.min(94, 76 + matches.length * 5);
-    connection = matches.join(", ");
-    uncertainty = "This confirms a profile match, not the medical cause of a reaction.";
-  }else if(suspected.length){
+    summary = "Honeycomb found " + direct.join(", ") + " in the information it could read or verify, and that overlaps with your known or personal-avoid profile.";
+    confidence = Math.min(94, 78 + direct.length * 5);
+    connection = direct.join(", ");
+    uncertainty = "This confirms a saved-profile match, not the medical cause of any symptom.";
+  }else if(matches.suspected.length){
     headline = "Needs a closer look";
     signal = "WATCHING";
-    summary = "This includes " + suspected.join(", ") + ", which you currently track as something to investigate.";
-    confidence = Math.min(80, 58 + suspected.length * 6);
-    connection = suspected.join(", ");
+    summary = "This includes " + matches.suspected.join(", ") + ", which you currently track as something to investigate.";
+    confidence = Math.min(84, 62 + matches.suspected.length * 6);
+    connection = matches.suspected.join(", ");
     uncertainty = "A suspected trigger is not a confirmed allergy.";
-  }else if(tolerated.length){
+  }else if(matches.tolerated.length){
     headline = "No identified conflict";
     signal = "PRIOR TOLERANCE";
-    summary = "This overlaps with something on your Works for Me list: " + tolerated.join(", ") + ".";
-    confidence = Math.min(72, 50 + tolerated.length * 6);
-    connection = tolerated.join(", ");
+    summary = "This overlaps with something on your Works for Me list: " + matches.tolerated.join(", ") + ".";
+    confidence = Math.min(76, 54 + matches.tolerated.length * 6);
+    connection = matches.tolerated.join(", ");
     uncertainty = "Past tolerance does not guarantee future tolerance.";
   }else if(text){
     headline = "No identified conflict";
-    signal = "NO MATCH FOUND";
-    summary = "Honeycomb did not find a match in your current known, watching, or avoid lists.";
-    confidence = 46;
-    uncertainty = "No match found does not mean the item is guaranteed safe.";
-  }else{
-    const demo = {
-      "Auto":["Scene captured","Honeycomb would route this image to the best analysis workflow."],
-      "Label":["Ingredient label captured","The next ML/OCR step will extract label text and compare it with your Hive."],
-      "Food":["Food captured","Food recognition can suggest possibilities, but ingredients still need verification."],
-      "Product":["Product captured","Product identity can later connect to ingredient/source research."],
-      "Cosmetic":["Cosmetic captured","The next step is product identity plus ingredient/source analysis."],
-      "Fabric":["Material captured","A fabric workflow can read labels and compare material information with your history."],
-      "Plant":["Nature image captured","Species identification would need verification before exposure guidance."],
-      "Flare-up":["Reaction photo captured","Honeycomb should document the image and connect it with recent exposures, not diagnose the skin condition."]
-    };
-    const pair = demo[activeMode] || demo.Auto;
-    summary = pair[1];
-    connection = pair[0];
-    confidence = activeMode === "Label" ? 36 : 24;
+    signal = "NO PROFILE MATCH";
+    summary = "Honeycomb did not find a match in your current known, watching, or personal-avoid lists.";
+    confidence = 48;
+    uncertainty = "No profile match does not mean the item is guaranteed safe.";
+  }
+
+  if(meta.product){
+    const p = meta.product;
+    if(signal === "NO PROFILE MATCH"){
+      summary = "I identified " + p.name + (p.brands ? " by " + p.brands : "") + " and checked the listed product information against your Hive. I did not find a saved-profile conflict.";
+    }else if(signal === "UNCERTAIN"){
+      summary = "I found a probable product match for " + p.name + ", but there is not enough verified ingredient information to finish the comparison.";
+    }else{
+      summary = "For " + p.name + ": " + summary;
+    }
+    confidence = Math.max(confidence, p.ingredients ? 74 : 62);
+    uncertainty = p.ingredients ? uncertainty : "The product match is stronger than the ingredient evidence; the database did not provide a complete ingredient list.";
+  }else if(meta.ocrText){
+    summary = "I could read some packaging text, but I could not verify the exact product in the public product databases. Try the barcode or back label for a stronger match.";
+    confidence = Math.max(confidence, Math.min(58, 30 + Math.round((meta.ocrConfidence || 0) / 5)));
+    uncertainty = "The text came from OCR and the exact product was not independently verified.";
+    connection = meta.ocrText.slice(0,100).replace(/\s+/g," ");
+  }else if(!text){
+    summary = activeMode === "Flare-up"
+      ? "I captured the image for your history, but this prototype cannot diagnose a skin condition from a photo."
+      : "I could not identify this reliably from the current image. Try showing the barcode or ingredient panel, or use the text button.";
+    confidence = 18;
+    uncertainty = activeMode === "Flare-up"
+      ? "Image-based diagnosis is intentionally not provided."
+      : "No barcode, readable text, or verified product match was available.";
   }
 
   return {
     id:Date.now(),
     mode:activeMode,
-    text:text.slice(0,1200),
+    text:String(text || "").slice(0,2500),
+    ocrText:String(meta.ocrText || "").slice(0,2000),
     photo:photo && photo.startsWith("data:") ? photo : "",
-    headline:headline,
-    summary:summary,
-    signal:signal,
-    confidence:confidence,
-    connection:connection,
-    uncertainty:uncertainty,
+    headline,
+    summary,
+    signal,
+    confidence,
+    connection,
+    uncertainty,
     time:now(),
-    saved:false
+    saved:false,
+    productName:meta.product ? meta.product.name : "",
+    productBrand:meta.product ? meta.product.brands : "",
+    productCode:meta.product ? meta.product.code : "",
+    ingredients:meta.product ? meta.product.ingredients : "",
+    productImage:meta.product ? meta.product.image : "",
+    sourceName:meta.product ? meta.product.sourceName : "",
+    sourceUrl:meta.product ? meta.product.sourceUrl : "",
+    memory:meta.memory || null,
+    scanConversation:[]
   };
+}
+
+function renderProductCard(result){
+  const card = $("#productCard");
+  if(!result.productName){
+    card.classList.add("hidden");
+    return;
+  }
+  card.classList.remove("hidden");
+  $("#productName").textContent = result.productName;
+  $("#productBrand").textContent = result.productBrand || result.sourceName || "";
+  $("#productIngredients").textContent = result.ingredients
+    ? "Ingredients: " + result.ingredients
+    : "Ingredient list was not available from the matched public product record.";
+  const img = $("#productImage");
+  img.style.backgroundImage = result.productImage ? 'url("' + result.productImage + '")' : "none";
+  const link = $("#productSourceLink");
+  link.textContent = result.sourceName ? "View " + result.sourceName + " source ↗" : "View product source ↗";
+  link.href = result.sourceUrl || "#";
+  link.classList.toggle("hidden", !result.sourceUrl);
+}
+
+function renderMemory(result){
+  const box = $("#memoryNotice");
+  if(result.memory && result.memory.hasMatch){
+    box.classList.remove("hidden");
+    $("#memoryTitle").textContent = result.memory.title;
+    $("#memoryText").textContent = result.memory.text;
+  }else{
+    box.classList.add("hidden");
+  }
+}
+
+function scanIntroMessage(result){
+  const parts = [];
+  if(result.productName){
+    parts.push("I found a probable match for " + result.productName + (result.productBrand ? " by " + result.productBrand : "") + ".");
+    if(result.ingredients) parts.push("I pulled a listed ingredient record and compared it with your Hive.");
+    else parts.push("The product record did not include a complete ingredient list, so I’m keeping the result cautious.");
+  }else if(result.ocrText){
+    parts.push("I could read some text, but I could not independently verify the exact product yet.");
+  }else{
+    parts.push("I could not reliably identify the product from this image yet.");
+  }
+  if(result.memory && result.memory.hasMatch) parts.push(result.memory.text);
+  if(activeMode === "Flare-up"){
+    parts.push("I can help document what you’re noticing and compare it with recent exposures, but I can’t diagnose the skin condition from the photo.");
+  }else{
+    parts.push("Have you already used this, or are you checking before use?");
+  }
+  return parts.join(" ");
+}
+
+function renderScanConversation(){
+  const wrap = $("#scanConversationMessages");
+  const msgs = pendingScan && pendingScan.scanConversation ? pendingScan.scanConversation : [];
+  wrap.innerHTML = msgs.map(m => '<div class="scan-msg ' + (m.role === "user" ? "user" : "honey") + '">' + esc(m.text) + '</div>').join("");
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function rememberScan(result){
+  if(!result || result.saved) return;
+  const stored = Object.assign({}, result, {photo:"", scanConversation:result.scanConversation || [], saved:true});
+  result.saved = true;
+  state.scans.push(stored);
+  if(state.scans.length > 80) state.scans = state.scans.slice(-80);
+  saveQuietly();
+  renderHive();
+  $("#saveScanBtn").textContent = "Saved";
 }
 
 function openResult(result){
   pendingScan = result;
+  $(".result-sheet").classList.remove("busy");
+  $("#investigationPanel").classList.add("hidden");
+  $("#resultContent").classList.remove("hidden");
   $("#resultModeLabel").textContent = result.mode.toUpperCase() + " · SCAN RESULT";
   $("#resultHeadline").textContent = result.headline;
   $("#resultSummary").textContent = result.summary;
   $("#resultSignalText").textContent = result.signal;
   $("#resultConfidence").textContent = result.confidence + "%";
   $("#signalFill").style.width = result.confidence + "%";
-  $("#whyRecognized").textContent = result.mode === "Auto" ? "Automatic route" : result.mode;
+  $("#whyRecognized").textContent = result.productName || (result.ocrText ? "Packaging text" : (result.mode === "Auto" ? "Automatic scan" : result.mode));
   $("#whyConnection").textContent = result.connection;
   $("#whyUncertainty").textContent = result.uncertainty;
 
@@ -239,23 +613,107 @@ function openResult(result){
     rp.classList.add("hidden");
   }
 
+  renderProductCard(result);
+  renderMemory(result);
   $("#whyFlaggedPanel").classList.remove("open");
+  $("#saveScanBtn").textContent = result.saved ? "Saved" : "Save";
+
+  result.scanConversation = result.scanConversation || [];
+  if(!result.scanConversation.length){
+    result.scanConversation.push({role:"ai",text:scanIntroMessage(result)});
+  }
+  renderScanConversation();
+
   $("#resultLayer").classList.add("open");
   $("#resultLayer").setAttribute("aria-hidden","false");
+  rememberScan(result);
 }
 
-function closeResult(){
-  $("#resultLayer").classList.remove("open");
-  $("#resultLayer").setAttribute("aria-hidden","true");
+async function investigateScan(photo, manualText=""){
+  const myRun = ++investigationRun;
+  beginInvestigation(photo);
+
+  const productCapable = ["Auto","Label","Food","Product","Cosmetic"].includes(activeMode);
+  let barcode = "";
+  let product = null;
+  let ocrText = String(manualText || "").trim();
+  let ocrConfidence = manualText ? 100 : 0;
+
+  if(productCapable && photo && !manualText){
+    setInvestigationStep("barcode","Looking for a barcode","Fastest route to an exact product record…","active");
+    barcode = await detectBarcode(photo);
+    if(myRun !== investigationRun) return;
+    if(barcode){
+      setInvestigationStep("barcode","Barcode found",barcode,"done");
+      setInvestigationStep("database","Checking public product databases","Looking for an exact barcode match…","active");
+      product = await lookupByBarcode(barcode);
+      if(myRun !== investigationRun) return;
+      setInvestigationStep("database",
+        product ? "Product record found" : "No barcode record found",
+        product ? (product.name + " · " + product.sourceName) : "Trying visible packaging text next.",
+        product ? "done" : "failed"
+      );
+    }else{
+      setInvestigationStep("barcode","No barcode detected","Trying text on the package instead.","failed");
+    }
+  }
+
+  if(!ocrText && photo && (!product || !product.ingredients)){
+    setInvestigationStep("ocr","Reading visible packaging text","OCR can take several seconds on the first scan…","active");
+    const ocr = await runOCR(photo, myRun);
+    if(myRun !== investigationRun) return;
+    ocrText = ocr.text;
+    ocrConfidence = ocr.confidence;
+    if(ocrText){
+      const preview = ocrText.replace(/\s+/g," ").slice(0,110);
+      setInvestigationStep("ocr","Packaging text read",preview + (ocrText.length > 110 ? "…" : ""),"done");
+    }else{
+      setInvestigationStep("ocr","Text was too blurry to read","A closer photo of the front, back, or barcode may work better.","failed");
+    }
+  }else if(manualText){
+    setInvestigationStep("ocr","Using the text you provided",manualText.slice(0,120),"done");
+  }
+
+  if(productCapable && !product && ocrText){
+    setInvestigationStep("web","Searching product sources","Checking food, beauty, and general product databases…","active");
+    product = await searchProductByText(ocrText);
+    if(myRun !== investigationRun) return;
+    setInvestigationStep("web",
+      product ? "Probable product match found" : "No verified product match yet",
+      product ? (product.name + " · " + product.sourceName) : "Open-ended web search still needs the future secure Honeycomb backend.",
+      product ? "done" : "failed"
+    );
+  }
+
+  const analysisText = [
+    manualText,
+    ocrText,
+    product ? product.name : "",
+    product ? product.brands : "",
+    product ? product.ingredients : ""
+  ].filter(Boolean).join("\n");
+
+  setInvestigationStep("hive","Checking your Hive","Known allergies, Watching, personal avoids, and tolerated history…","active");
+  await sleep(260);
+  if(myRun !== investigationRun) return;
+
+  const memory = findMemoryMatches(product, analysisText);
+  setInvestigationStep("hive","Hive comparison complete",
+    memory.hasMatch ? memory.text : "No earlier matching scan or Honey conversation was found.",
+    "done"
+  );
+
+  await sleep(180);
+  if(myRun !== investigationRun) return;
+
+  const result = makeScanResult(analysisText, photo, {product,ocrText,ocrConfidence,memory});
+  openResult(result);
 }
 
 function savePendingScan(){
   if(!pendingScan) return;
-  if(!pendingScan.saved){
-    pendingScan.saved = true;
-    state.scans.push(Object.assign({}, pendingScan));
-    save();
-  }
+  if(!pendingScan.saved) rememberScan(pendingScan);
+  $("#saveScanBtn").textContent = "Saved";
   toast("Saved to your Hive");
 }
 
@@ -307,10 +765,11 @@ function renderHive(){
       if(s.mode === "Food") icon = "🍽";
       if(s.mode === "Plant") icon = "🌿";
       if(s.mode === "Flare-up") icon = "✦";
-      return '<article class="history-card"><div class="history-icon">' + icon + '</div><div><h4>' + esc(s.headline) + '</h4><p>' + esc(s.summary) + '</p></div><time>' + esc(s.time) + '</time></article>';
+      const title = s.productName || s.headline || "Saved scan";
+      return '<article class="history-card"><div class="history-icon">' + icon + '</div><div><h4>' + esc(title) + '</h4><p>' + esc(s.summary || "") + '</p></div><time>' + esc(s.time || "") + '</time></article>';
     }).join("");
   }else{
-    $("#recentScans").innerHTML = '<div class="empty-state">Your saved scans will build your exposure history here.</div>';
+    $("#recentScans").innerHTML = '<div class="empty-state">Your scans will build your exposure history here automatically on this device.</div>';
   }
 
   if(state.reactions.length){
@@ -367,7 +826,7 @@ function openReport(){
   const scans = state.scans.slice(-15).reverse();
   const reactions = state.reactions.slice(-15).reverse();
 
-  const scanList = scans.length ? '<ul>' + scans.map(s => '<li><b>' + esc(s.headline) + '</b> — ' + esc(s.summary) + ' <small>(' + s.confidence + '% evidence, ' + esc(s.time) + ')</small></li>').join("") + '</ul>' : '<p>No saved scans.</p>';
+  const scanList = scans.length ? '<ul>' + scans.map(s => '<li><b>' + esc(s.productName || s.headline) + '</b> — ' + esc(s.summary) + ' <small>(' + s.confidence + '% evidence, ' + esc(s.time) + ')</small></li>').join("") + '</ul>' : '<p>No saved scans.</p>';
   const reactionList = reactions.length ? '<ul>' + reactions.map(r => '<li><b>' + r.severity + '/5</b> — ' + esc(r.note) + (r.exposure ? ' · ' + esc(r.exposure) : '') + ' <small>(' + esc(r.time) + ')</small></li>').join("") + '</ul>' : '<p>No reaction entries.</p>';
   const recordList = state.records.length ? '<ul>' + state.records.map(r => '<li>' + esc(r.name) + ' — ' + esc(r.time || r.added || "") + '</li>').join("") + '</ul>' : '<p>None recorded.</p>';
 
@@ -396,7 +855,7 @@ function honeyReply(q){
   const reaction = state.reactions[state.reactions.length-1];
 
   if(low.includes("last scan") || low.includes("flag")){
-    return last ? "Your latest saved scan was “" + last.headline + "” with " + last.confidence + "% evidence confidence. " + last.summary + " The main uncertainty was: " + last.uncertainty : "You do not have a saved scan yet. Open Scan and save one, then I can reference it here.";
+    return last ? "Your latest scan was “" + (last.productName || last.headline) + "” with " + last.confidence + "% evidence confidence. " + last.summary + " The main uncertainty was: " + last.uncertainty : "You do not have a saved scan yet.";
   }
   if(low.includes("react") || low.includes("flare")){
     return reaction ? "Your latest reaction entry was " + reaction.severity + "/5: " + reaction.note + (reaction.exposure ? " You associated it with " + reaction.exposure + "." : "") + " I can organize the history, but I cannot determine the medical cause from this alone." : "You have not logged a reaction yet.";
@@ -409,7 +868,7 @@ function honeyReply(q){
     const k = list(state.profile.known);
     return k.length ? "Your Known Allergies section currently has " + k.length + " item" + (k.length === 1 ? "" : "s") + ". I keep those separate from Watching so a suspicion does not silently become a confirmed allergy." : "Your Known Allergies section is empty right now.";
   }
-  return "I can use your Honeycomb profile, saved scans, and reaction journal to organize context. In a production version, I would also retrieve trusted, current sources and show citations and uncertainty.";
+  return "I can use your Honeycomb profile, scan history, and reaction journal to organize context. A production version would add a secure vision/search backend for broader web research and cited health information.";
 }
 
 function sendChat(prefill){
@@ -420,6 +879,54 @@ function sendChat(prefill){
   state.chat.push({role:"ai",text:honeyReply(q),time:now()});
   input.value = "";
   save();
+}
+
+function scanFollowupReply(q){
+  const low = q.toLowerCase();
+  const r = pendingScan;
+  if(!r) return "I lost the scan context. Try scanning the item again.";
+
+  if(/\b(yes|used|already|this morning|today|yesterday|tried)\b/.test(low)){
+    return "Got it. I’ll keep that usage connected to this scan. If you noticed irritation or another reaction, tell me what happened and I can help you log the timing and exposure. I can’t determine the medical cause from the photo alone.";
+  }
+  if(low.includes("rash") || low.includes("irritat") || low.includes("burn") || low.includes("itch")){
+    return "I can document what you’re noticing and compare it with recent exposures and this product. I can’t diagnose a rash or say this product caused it from the image alone. If you want, use “Log reaction” and include when it started and what you noticed.";
+  }
+  if(low.includes("ingredient")){
+    return r.ingredients
+      ? "The public product record lists: " + r.ingredients.slice(0,850) + (r.ingredients.length > 850 ? "…" : "")
+      : "The matched record did not include a complete ingredient list. A clear photo of the ingredient panel may give Honeycomb more to compare.";
+  }
+  if(low.includes("before") || low.includes("scan") || low.includes("remember")){
+    return r.memory && r.memory.hasMatch ? r.memory.text : "I did not find a matching earlier scan or Honey conversation on this browser.";
+  }
+  if(low.includes("safe") || low.includes("can i use") || low.includes("okay to use")){
+    if(r.signal === "PROFILE MATCH"){
+      return "Your saved profile has a direct match with information from this product, so Honeycomb is treating it as a conflict. Verify the label/source and follow the allergy or avoidance plan you use with your clinician. I would not treat this result as a medical diagnosis.";
+    }
+    return "I did not identify a saved-profile conflict, but that is not the same as proving the product is safe for you. Ingredient records can be incomplete and reactions can have causes outside your current Hive.";
+  }
+  return "I’m keeping this product, its source, your Hive comparison, and this conversation together. You can ask me about the ingredient list, whether you’ve scanned it before, or tell me what happened after you used it.";
+}
+
+function sendScanFollowup(){
+  const input = $("#scanFollowupInput");
+  const q = String(input.value || "").trim();
+  if(!q || !pendingScan) return;
+  pendingScan.scanConversation = pendingScan.scanConversation || [];
+  pendingScan.scanConversation.push({role:"user",text:q});
+  const reply = scanFollowupReply(q);
+  pendingScan.scanConversation.push({role:"ai",text:reply});
+  input.value = "";
+  renderScanConversation();
+
+  state.chat.push({role:"user",text:"Scan follow-up about " + (pendingScan.productName || pendingScan.mode) + ": " + q,time:now()});
+  state.chat.push({role:"ai",text:reply,time:now()});
+
+  const stored = state.scans.find(s => s.id === pendingScan.id);
+  if(stored) stored.scanConversation = pendingScan.scanConversation.slice();
+  saveQuietly();
+  renderChat();
 }
 
 function openReaction(exposure=""){
@@ -489,35 +996,33 @@ $$(".scan-mode").forEach(b => b.onclick = () => {
   toast(activeMode + " mode");
 });
 [$("#scanUpload"),$("#fallbackUpload")].forEach(input => input.onchange = e => showUploaded(e.target.files && e.target.files[0]));
-$("#captureBtn").onclick = () => {
-  const photo = captureFrame();
-  toast("Scanning…");
-  setTimeout(() => openResult(makeScanResult("", photo)), 450);
-};
+$("#captureBtn").onclick = () => investigateScan(captureFrame());
 $("#textScanBtn").onclick = () => $("#textScanDialog").showModal();
 $("#analyzeTextBtn").onclick = () => {
   const text = ($("#scanTextInput").value || "").trim();
   if(!text) return;
   $("#scanTextInput").value = "";
-  setTimeout(() => openResult(makeScanResult(text, captureFrame())), 120);
+  investigateScan(captureFrame(), text);
 };
 
-// Result sheet
+// Result sheet + inline Honey
 $("#closeResultBtn").onclick = closeResult;
 $("#resultScrim").onclick = closeResult;
 $("#whyFlaggedBtn").onclick = () => $("#whyFlaggedPanel").classList.toggle("open");
 $("#saveScanBtn").onclick = savePendingScan;
 $("#askHoneyBtn").onclick = () => {
-  savePendingScan();
-  const msg = "Why did you flag my last scan? It said: " + ((pendingScan && pendingScan.headline) || "Needs review") + ".";
-  closeResult();
-  showScreen("honeyScreen");
-  sendChat(msg);
+  $("#scanFollowupInput").focus();
+  $("#scanFollowupInput").scrollIntoView({behavior:"smooth",block:"center"});
 };
+$("#scanFollowupSend").onclick = sendScanFollowup;
+$("#scanFollowupInput").addEventListener("keydown", e => {
+  if(e.key === "Enter"){
+    e.preventDefault();
+    sendScanFollowup();
+  }
+});
 $("#logReactionFromScanBtn").onclick = () => {
-  savePendingScan();
-  const exposure = (pendingScan && pendingScan.text ? pendingScan.text.slice(0,80) : (pendingScan && pendingScan.mode) || "");
-  closeResult();
+  const exposure = pendingScan ? (pendingScan.productName || pendingScan.text.slice(0,80) || pendingScan.mode) : "";
   openReaction(exposure);
 };
 
@@ -527,7 +1032,7 @@ $("#addReactionBtn").onclick = () => openReaction();
 $("#severityInput").oninput = e => $("#severityValue").textContent = e.target.value;
 $("#saveReactionBtn").onclick = saveReaction;
 
-// Chat
+// Main Honey chat
 $("#sendChatBtn").onclick = () => sendChat();
 $("#chatInput").addEventListener("keydown", e => {
   if(e.key === "Enter" && !e.shiftKey){
