@@ -241,3 +241,16 @@ button,input,textarea{font:inherit}button{cursor:pointer}
 .brain-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:999px;background:#2b2119;color:white;font-size:9px;font-weight:800;letter-spacing:.08em}
 .brain-badge:before{content:"✦";color:#f4bc55}
 .scan-msg.thinking{opacity:.65;font-style:italic}
+
+
+/* V2.4 — simplify scan results while Brain is still being connected */
+.result-sheet{padding-bottom:24px}
+.result-summary{font-size:15px}
+.signal-card{margin:14px 0}
+.expand-button{font-size:13px}
+#whyFlaggedPanel{font-size:12px}
+.scan-conversation{margin-top:14px}
+.prototype-note{max-width:520px;margin:14px auto 0}
+@media(min-width:900px){
+  .result-sheet{width:min(620px,calc(100vw - 120px));max-height:86vh}
+}
