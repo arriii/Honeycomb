@@ -292,30 +292,74 @@
           <span id="resultModeLabel" class="eyebrow">SCAN RESULT</span>
           <button id="closeResultBtn" class="close-btn">×</button>
         </div>
-        <div id="resultPhoto" class="result-photo hidden"></div>
-        <h2 id="resultHeadline">Needs a closer look</h2>
-        <p id="resultSummary" class="result-summary">Honeycomb found something worth investigating.</p>
 
-        <div class="signal-card">
-          <div class="signal-label"><span>Honeycomb signal</span><strong id="resultSignalText">UNCERTAIN</strong></div>
-          <div class="signal-track"><div id="signalFill" class="signal-fill"></div></div>
-          <div class="signal-meta"><span>Evidence confidence</span><strong id="resultConfidence">0%</strong></div>
-          <small>Evidence confidence measures support for this explanation. It is not the probability that you are allergic.</small>
-        </div>
+        <section id="investigationPanel" class="investigation-panel hidden">
+          <div class="investigation-heading">
+            <div class="honey-orb small-orb">✦</div>
+            <div>
+              <span class="eyebrow">HONEY IS INVESTIGATING</span>
+              <h2 id="investigationTitle">Looking at your scan…</h2>
+            </div>
+          </div>
+          <div id="investigationSteps" class="investigation-steps"></div>
+          <p id="investigationHint" class="investigation-hint">A product lookup can take a few seconds. Honeycomb will show what it could verify and what is still uncertain.</p>
+        </section>
 
-        <button id="whyFlaggedBtn" class="expand-button">Why Honeycomb flagged this <span>＋</span></button>
-        <div id="whyFlaggedPanel" class="why-panel">
-          <div class="why-row"><span>Recognized</span><strong id="whyRecognized">—</strong></div>
-          <div class="why-row"><span>Profile connection</span><strong id="whyConnection">—</strong></div>
-          <div class="why-row"><span>Missing / uncertain</span><strong id="whyUncertainty">—</strong></div>
-        </div>
+        <section id="resultContent">
+          <div id="resultPhoto" class="result-photo hidden"></div>
 
-        <div class="result-actions">
-          <button id="saveScanBtn" class="button button-soft">Save</button>
-          <button id="askHoneyBtn" class="button button-dark">Ask Honey</button>
-          <button id="logReactionFromScanBtn" class="button button-soft">Log reaction</button>
-        </div>
-        <p class="prototype-note">Honeycomb does not provide a medical diagnosis or guarantee that an exposure is safe.</p>
+          <div id="productCard" class="product-card hidden">
+            <div id="productImage" class="product-image"></div>
+            <div class="product-copy">
+              <span class="eyebrow">PROBABLE PRODUCT</span>
+              <h3 id="productName">Product</h3>
+              <p id="productBrand" class="product-brand"></p>
+              <p id="productIngredients" class="product-ingredients"></p>
+              <a id="productSourceLink" class="source-link" href="#" target="_blank" rel="noopener">View product source ↗</a>
+            </div>
+          </div>
+
+          <div id="memoryNotice" class="memory-notice hidden">
+            <div class="memory-icon">↺</div>
+            <div>
+              <strong id="memoryTitle">Honeycomb remembers this.</strong>
+              <p id="memoryText"></p>
+            </div>
+          </div>
+
+          <h2 id="resultHeadline">Needs a closer look</h2>
+          <p id="resultSummary" class="result-summary">Honeycomb found something worth investigating.</p>
+
+          <div class="signal-card">
+            <div class="signal-label"><span>Honeycomb signal</span><strong id="resultSignalText">UNCERTAIN</strong></div>
+            <div class="signal-track"><div id="signalFill" class="signal-fill"></div></div>
+            <div class="signal-meta"><span>Evidence confidence</span><strong id="resultConfidence">0%</strong></div>
+            <small>Evidence confidence measures support for this explanation. It is not the probability that you are allergic.</small>
+          </div>
+
+          <button id="whyFlaggedBtn" class="expand-button">Why Honeycomb flagged this <span>＋</span></button>
+          <div id="whyFlaggedPanel" class="why-panel">
+            <div class="why-row"><span>Recognized</span><strong id="whyRecognized">—</strong></div>
+            <div class="why-row"><span>Profile connection</span><strong id="whyConnection">—</strong></div>
+            <div class="why-row"><span>Missing / uncertain</span><strong id="whyUncertainty">—</strong></div>
+          </div>
+
+          <div class="scan-conversation">
+            <span class="eyebrow">KEEP TALKING WITH HONEY</span>
+            <div id="scanConversationMessages" class="scan-conversation-messages"></div>
+            <div class="scan-followup-composer">
+              <input id="scanFollowupInput" placeholder="Tell Honey what happened or ask a follow-up…" />
+              <button id="scanFollowupSend" class="send-button" aria-label="Send follow-up">↑</button>
+            </div>
+          </div>
+
+          <div class="result-actions">
+            <button id="saveScanBtn" class="button button-soft">Save</button>
+            <button id="askHoneyBtn" class="button button-dark">Ask Honey</button>
+            <button id="logReactionFromScanBtn" class="button button-soft">Log reaction</button>
+          </div>
+          <p class="prototype-note">Honeycomb can organize evidence, product data, and your saved history. It does not diagnose a condition or guarantee that an exposure is safe.</p>
+        </section>
       </article>
     </div>
 
@@ -353,6 +397,6 @@
     </dialog>
   </div>
 
-  <script src="app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>\n  <script src="app.js"></script>
 </body>
 </html>
