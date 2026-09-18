@@ -1,9 +1,10 @@
 {
-  "name": "Honeycomb",
+  "name": "Honeycomb — Personal Exposure Intelligence",
   "short_name": "Honeycomb",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#15110b",
-  "theme_color": "#e8a62e",
-  "description": "Personal exposure intelligence."
+  "background_color": "#fbf5ea",
+  "theme_color": "#fbf5ea",
+  "description": "A camera-first personal exposure and allergy-tracking prototype."
 }
