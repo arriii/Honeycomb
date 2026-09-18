@@ -1,162 +1,407 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<meta name="theme-color" content="#e8a62e"/>
-<title>Honeycomb</title>
-<link rel="manifest" href="manifest.json"/>
-<link rel="stylesheet" href="styles.css"/>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#fbf5ea" />
+  <meta name="description" content="Honeycomb — personal exposure intelligence." />
+  <title>Honeycomb</title>
+  <link rel="manifest" href="manifest.json?v=25" />
+  <link rel="stylesheet" href="styles.css?v=26" />
 </head>
 <body>
-<div id="onboarding" class="onboarding">
-  <div class="onboard-card">
-    <div class="logo big"><span>H</span></div>
-    <p class="kicker">PERSONAL EXPOSURE INTELLIGENCE</p>
-    <h1>Know what touches your world.</h1>
-    <p class="soft">Honeycomb helps organize what you know, what you suspect, what you scan, and what happens over time.</p>
-    <label>Name or nickname<input id="signupName" placeholder="What should Honeycomb call you?"/></label>
-    <label>Email<input id="signupEmail" type="email" placeholder="you@example.com"/></label>
-    <button id="startBtn" class="btn primary">Enter Honeycomb</button>
-    <small>This classroom prototype stores data only in this browser.</small>
+  <div id="onboarding" class="onboarding hidden" aria-live="polite">
+    <section id="welcomeStep" class="welcome-step onboarding-step active">
+      <div class="welcome-photo" aria-hidden="true"></div>
+      <div class="welcome-shade"></div>
+      <div class="welcome-top">
+        <div class="brand brand-light"><span class="brand-mark"></span><strong>Honeycomb</strong></div>
+      </div>
+      <div class="welcome-copy">
+        <span class="eyebrow light">PERSONAL EXPOSURE INTELLIGENCE</span>
+        <h1>Know before it touches you.</h1>
+        <p>Scan food, skincare, cosmetics, household products and more against what matters to your body.</p>
+        <button id="getStartedBtn" class="button button-cream button-large">Get started</button>
+        <button id="signinBtn" class="text-link light-link">Already have a Hive? Continue</button>
+        <small class="photo-credit">Photo: Compagnons / Unsplash</small>
+      </div>
+    </section>
+
+    <section id="nameStep" class="onboarding-step onboarding-form">
+      <div class="onboarding-inner">
+        <button class="back-button" data-back="welcomeStep">←</button>
+        <div class="mini-honeycomb" aria-hidden="true"><span></span><span></span><span></span></div>
+        <span class="eyebrow">MAKE IT YOURS</span>
+        <h2>What should Honey call you?</h2>
+        <p class="muted">You can change this anytime.</p>
+        <label class="soft-field">
+          <span>Name or nickname</span>
+          <input id="onboardName" autocomplete="name" placeholder="Your name" />
+        </label>
+        <button id="nameNextBtn" class="button button-dark button-large">Continue</button>
+      </div>
+    </section>
+
+    <section id="watchStep" class="onboarding-step onboarding-form">
+      <div class="onboarding-inner wide">
+        <button class="back-button" data-back="nameStep">←</button>
+        <span class="eyebrow">YOUR HIVE</span>
+        <h2>What should Honeycomb watch for?</h2>
+        <p class="muted">Pick anything that fits. This only personalizes the experience.</p>
+        <div id="watchCards" class="watch-grid">
+          <button class="watch-card" data-watch="Food allergies"><span>🍽</span><b>Food allergies</b></button>
+          <button class="watch-card" data-watch="Skin & cosmetic reactions"><span>🧴</span><b>Skin & cosmetics</b></button>
+          <button class="watch-card" data-watch="Ingredient sensitivities"><span>🔎</span><b>Ingredient sensitivities</b></button>
+          <button class="watch-card" data-watch="Environmental allergies"><span>🌿</span><b>Environmental</b></button>
+          <button class="watch-card" data-watch="Materials & fabrics"><span>🧵</span><b>Materials & fabrics</b></button>
+          <button class="watch-card" data-watch="Still figuring it out"><span>✨</span><b>Still figuring it out</b></button>
+        </div>
+        <button id="watchNextBtn" class="button button-dark button-large">Continue</button>
+      </div>
+    </section>
+
+    <section id="contextStep" class="onboarding-step onboarding-form">
+      <div class="onboarding-inner wide">
+        <button class="back-button" data-back="watchStep">←</button>
+        <span class="eyebrow">OPTIONAL</span>
+        <h2>Anything Honey should know already?</h2>
+        <p class="muted">Keep confirmed allergies separate from things you are only watching.</p>
+        <div class="onboard-context-grid">
+          <label class="soft-field"><span>Known allergies</span><textarea id="onboardKnown" placeholder="Comma separated"></textarea></label>
+          <label class="soft-field"><span>Watching / suspected triggers</span><textarea id="onboardSuspected" placeholder="Things you are still investigating"></textarea></label>
+        </div>
+        <div class="onboard-actions">
+          <button id="skipContextBtn" class="button button-soft">Skip for now</button>
+          <button id="finishOnboardBtn" class="button button-dark">Enter Honeycomb</button>
+        </div>
+      </div>
+    </section>
   </div>
-</div>
 
-<div id="app" class="app hidden">
-<aside class="side">
-  <div class="brand"><div class="logo"><span>H</span></div><div><b>HONEYCOMB</b><small>your exposure map</small></div></div>
-  <nav id="desktopNav"></nav>
-  <div class="side-foot">Prototype · local-only storage</div>
-</aside>
+  <div id="app" class="app hidden">
+    <section id="scanScreen" class="screen scan-screen active">
+      <video id="camera" class="camera-feed" autoplay muted playsinline></video>
+      <div id="cameraFallback" class="camera-fallback">
+        <div class="fallback-photo"></div>
+        <div class="fallback-shade"></div>
+        <div class="fallback-copy">
+          <span class="eyebrow light">CAMERA OFF</span>
+          <h2>Honeycomb works best with your camera.</h2>
+          <p>Allow camera access or upload a photo to keep going.</p>
+          <label class="button button-cream">
+            Upload photo
+            <input id="fallbackUpload" type="file" accept="image/*" capture="environment" hidden />
+          </label>
+        </div>
+      </div>
+      <div class="camera-vignette"></div>
 
-<main>
-<header>
-  <div><p id="eyebrow" class="kicker">TODAY</p><h2 id="pageTitle">Your Hive</h2></div>
-  <button id="avatar" class="avatar">H</button>
-</header>
+      <header class="scan-header">
+        <div class="brand brand-light"><span class="brand-mark"></span><strong>Honeycomb</strong></div>
+        <button id="scanProfileBtn" class="avatar-button" aria-label="Open profile">H</button>
+      </header>
 
-<section id="home" class="view active">
-  <div class="hero">
-    <div class="hero-copy">
-      <p class="kicker">YOUR PERSONAL HONEYCOMB</p>
-      <h1>Scan the things around you. Keep the context.</h1>
-      <p class="soft">Food, labels, cosmetics, fabrics, plants, menus, products, or a flare-up — Honeycomb keeps each clue connected to your profile and history.</p>
-      <button class="btn primary" data-view="scan">Start a scan</button>
+      <div class="scan-intro">
+        <span class="eyebrow light">HONEYCOMB LIVE</span>
+        <h1>What are we checking?</h1>
+        <p>Point at a product, label, meal, plant, fabric, or anything you're unsure about.</p>
+      </div>
+
+      <div class="scan-target-wrap" aria-hidden="true">
+        <div class="scan-target">
+          <span class="scan-ring ring-one"></span>
+          <span class="scan-ring ring-two"></span>
+          <span class="scan-beam"></span>
+        </div>
+      </div>
+
+      <div class="scan-mode-area">
+        <div id="scanModes" class="scan-modes"></div>
+      </div>
+
+      <div class="camera-controls">
+        <label class="camera-side-control" aria-label="Upload a photo">
+          <span>＋</span>
+          <input id="scanUpload" type="file" accept="image/*" capture="environment" hidden />
+        </label>
+        <button id="captureBtn" class="capture-btn" aria-label="Capture scan"><span></span></button>
+        <button id="textScanBtn" class="camera-side-control" aria-label="Paste label text"><span>≡</span></button>
+      </div>
+
+      <div id="cameraToast" class="camera-toast">Camera ready</div>
+    </section>
+
+    <section id="hiveScreen" class="screen content-screen">
+      <div class="content-shell">
+        <header class="content-header">
+          <div>
+            <span class="eyebrow">YOUR PERSONAL MAP</span>
+            <h1>Hive</h1>
+            <p id="hiveGreeting" class="muted">The things you know, watch, tolerate, and react to.</p>
+          </div>
+          <button id="hiveAddReaction" class="round-action">＋</button>
+        </header>
+
+        <div class="hive-summary">
+          <article class="hive-summary-card known-card"><span>Known</span><strong id="knownCount">0</strong><small>confirmed items</small></article>
+          <article class="hive-summary-card watch-card-summary"><span>Watching</span><strong id="watchingCount">0</strong><small>still investigating</small></article>
+          <article class="hive-summary-card works-card"><span>Works for me</span><strong id="worksCount">0</strong><small>tolerated items</small></article>
+        </div>
+
+        <div class="section-row">
+          <div><span class="eyebrow">YOUR CELLS</span><h2>What Honeycomb remembers</h2></div>
+          <button class="link-button" data-open-you>Edit profile</button>
+        </div>
+
+        <div class="hive-cell-grid">
+          <article class="hive-cell">
+            <div class="cell-icon known-tone">!</div>
+            <div><small>KNOWN ALLERGIES</small><div id="knownChips" class="chip-list"></div></div>
+          </article>
+          <article class="hive-cell">
+            <div class="cell-icon watch-tone">?</div>
+            <div><small>WATCHING</small><div id="suspectedChips" class="chip-list"></div></div>
+          </article>
+          <article class="hive-cell">
+            <div class="cell-icon good-tone">✓</div>
+            <div><small>WORKS FOR ME</small><div id="toleratedChips" class="chip-list"></div></div>
+          </article>
+          <article class="hive-cell">
+            <div class="cell-icon neutral-tone">○</div>
+            <div><small>PERSONAL AVOIDS</small><div id="avoidChips" class="chip-list"></div></div>
+          </article>
+        </div>
+
+        <div class="section-row">
+          <div><span class="eyebrow">HISTORY</span><h2>Recent scans</h2></div>
+          <button id="scanAgainBtn" class="link-button">Scan something</button>
+        </div>
+        <div id="recentScans" class="history-list"></div>
+
+        <div class="section-row">
+          <div><span class="eyebrow">REACTIONS</span><h2>Your timeline</h2></div>
+          <button id="addReactionBtn" class="link-button">Log reaction</button>
+        </div>
+        <div id="reactionTimeline" class="history-list"></div>
+
+        <div class="section-row">
+          <div><span class="eyebrow">PATTERNS</span><h2>Worth investigating</h2></div>
+        </div>
+        <article id="patternCard" class="pattern-card"></article>
+      </div>
+    </section>
+
+    <section id="honeyScreen" class="screen content-screen honey-screen">
+      <div class="content-shell chat-shell">
+        <header class="content-header chat-header">
+          <div class="honey-title">
+            <div class="honey-orb">✦</div>
+            <div><span class="eyebrow">CONTEXTUAL AI</span><h1>Honey</h1></div>
+          </div>
+          <button id="clearChatBtn" class="link-button">Clear</button>
+        </header>
+
+        <p class="honey-intro">Ask about your scans, your reaction history, or what Honeycomb remembers. Honey should be useful without pretending certainty.</p>
+
+        <div id="quickPrompts" class="quick-prompts">
+          <button>Why did you flag my last scan?</button>
+          <button>What have I reacted to recently?</button>
+          <button>Make my appointment snapshot.</button>
+        </div>
+
+        <div id="chatMessages" class="chat-messages"></div>
+
+        <div class="chat-composer-wrap">
+          <div class="chat-composer">
+            <button id="chatCameraBtn" class="composer-icon" aria-label="Open scanner">⌁</button>
+            <textarea id="chatInput" rows="1" placeholder="Ask Honey..."></textarea>
+            <button id="micBtn" class="composer-icon" aria-label="Speech to text">🎙</button>
+            <button id="sendChatBtn" class="send-button" aria-label="Send">↑</button>
+          </div>
+          <small>Prototype assistant uses only information stored in this browser.</small>
+        </div>
+      </div>
+    </section>
+
+    <section id="youScreen" class="screen content-screen">
+      <div class="content-shell">
+        <header class="content-header">
+          <div><span class="eyebrow">YOUR HONEYCOMB</span><h1>You</h1><p class="muted">Profile, records, privacy, and your appointment-ready summary.</p></div>
+          <button id="appointmentTopBtn" class="button button-dark compact">Appointment snapshot</button>
+        </header>
+
+        <div class="profile-hero">
+          <div class="profile-avatar" id="profileAvatar">H</div>
+          <div><h2 id="profileDisplayName">Honeycomb User</h2><p id="profileWatchSummary">Your Hive is ready to personalize.</p></div>
+        </div>
+
+        <div class="profile-layout">
+          <article class="profile-panel">
+            <span class="eyebrow">ABOUT YOU</span>
+            <label class="soft-field"><span>Name or nickname</span><input id="profileName" /></label>
+            <label class="soft-field"><span>Background / synopsis</span><textarea id="profileSynopsis" placeholder="What should Honey or a clinician understand about what you've been experiencing?"></textarea></label>
+          </article>
+
+          <article class="profile-panel">
+            <span class="eyebrow">YOUR HIVE</span>
+            <label class="soft-field"><span>Known allergies</span><textarea id="knownInput" placeholder="Comma separated"></textarea></label>
+            <label class="soft-field"><span>Watching / suspected triggers</span><textarea id="suspectedInput" placeholder="Things you are still investigating"></textarea></label>
+            <label class="soft-field"><span>Personal avoid list</span><textarea id="avoidInput" placeholder="Items you personally avoid"></textarea></label>
+            <label class="soft-field"><span>Works for me / tolerated</span><textarea id="toleratedInput" placeholder="Things you've tolerated before"></textarea></label>
+          </article>
+
+          <article class="profile-panel">
+            <div class="panel-heading"><div><span class="eyebrow">RECORDS VAULT</span><h3>Documents & tests</h3></div></div>
+            <p class="muted small">For this public prototype, Honeycomb stores only the file name and date in your browser. The actual medical file is not uploaded anywhere.</p>
+            <label class="record-drop">
+              <span>＋ Add allergy test, doctor record, image, or summary</span>
+              <input id="recordInput" type="file" multiple accept=".pdf,image/*,.txt,.doc,.docx" hidden />
+            </label>
+            <div id="recordList" class="record-list"></div>
+          </article>
+
+          <article class="profile-panel">
+            <span class="eyebrow">PRIVACY & DATA</span>
+            <div class="settings-row"><span>Storage</span><strong>This browser only</strong></div>
+            <div class="settings-row"><span>AI API</span><strong>Not connected</strong></div>
+            <div class="settings-row"><span>Medical diagnosis</span><strong>Not provided</strong></div>
+            <button id="exportDataBtn" class="button button-soft full">Export my Honeycomb data</button>
+            <button id="clearDataBtn" class="button danger-button full">Erase local data</button>
+          </article>
+        </div>
+
+        <div class="profile-actions">
+          <button id="saveProfileBtn" class="button button-dark">Save changes</button>
+          <button id="appointmentBtn" class="button button-honey">Create appointment snapshot</button>
+        </div>
+      </div>
+    </section>
+
+    <nav id="bottomNav" class="bottom-nav">
+      <button class="nav-item active" data-screen="scanScreen"><span>⌾</span><small>Scan</small></button>
+      <button class="nav-item" data-screen="hiveScreen"><span>⬡</span><small>Hive</small></button>
+      <button class="nav-item" data-screen="honeyScreen"><span>✦</span><small>Honey</small></button>
+      <button class="nav-item" data-screen="youScreen"><span>◉</span><small>You</small></button>
+    </nav>
+
+    <div id="resultLayer" class="result-layer" aria-hidden="true">
+      <button id="resultScrim" class="result-scrim" aria-label="Close result"></button>
+      <article class="result-sheet">
+        <div class="sheet-handle"></div>
+        <div class="result-topline">
+          <span id="resultModeLabel" class="eyebrow">SCAN RESULT</span>
+          <button id="closeResultBtn" class="close-btn">×</button>
+        </div>
+
+        <section id="investigationPanel" class="investigation-panel hidden">
+          <div class="investigation-heading">
+            <div class="honey-orb small-orb">✦</div>
+            <div>
+              <span class="eyebrow">HONEY IS INVESTIGATING</span>
+              <h2 id="investigationTitle">Looking at your scan…</h2>
+            </div>
+          </div>
+          <div id="investigationSteps" class="investigation-steps"></div>
+          <p id="investigationHint" class="investigation-hint">A product lookup can take a few seconds. Honeycomb will show what it could verify and what is still uncertain.</p>
+        </section>
+
+        <section id="resultContent">
+          <div id="resultPhoto" class="result-photo hidden"></div>
+
+          <div id="productCard" class="product-card hidden">
+            <div id="productImage" class="product-image"></div>
+            <div class="product-copy">
+              <span class="eyebrow">PROBABLE PRODUCT</span>
+              <h3 id="productName">Product</h3>
+              <p id="productBrand" class="product-brand"></p>
+              <p id="productIngredients" class="product-ingredients"></p>
+              <a id="productSourceLink" class="source-link" href="#" target="_blank" rel="noopener">View product source ↗</a>
+            </div>
+          </div>
+
+          <div id="webSources" class="web-sources hidden">
+            <div class="web-sources-heading"><span class="eyebrow">WEB SOURCES</span><strong id="sourceCount"></strong></div>
+            <div id="sourceList" class="source-list"></div>
+          </div>
+
+          <div id="memoryNotice" class="memory-notice hidden">
+            <div class="memory-icon">↺</div>
+            <div>
+              <strong id="memoryTitle">Honeycomb remembers this.</strong>
+              <p id="memoryText"></p>
+            </div>
+          </div>
+
+          <h2 id="resultHeadline">Needs a closer look</h2>
+          <p id="resultSummary" class="result-summary">Honeycomb found something worth investigating.</p>
+
+          <div class="signal-card">
+            <div class="signal-label"><span>Honeycomb signal</span><strong id="resultSignalText">UNCERTAIN</strong></div>
+            <div class="signal-track"><div id="signalFill" class="signal-fill"></div></div>
+            <div class="signal-meta"><span>Evidence confidence</span><strong id="resultConfidence">0%</strong></div>
+            <small>Evidence confidence measures support for this explanation. It is not the probability that you are allergic.</small>
+          </div>
+
+          <button id="whyFlaggedBtn" class="expand-button">Why Honeycomb flagged this <span>＋</span></button>
+          <div id="whyFlaggedPanel" class="why-panel">
+            <div class="why-row"><span>Recognized</span><strong id="whyRecognized">—</strong></div>
+            <div class="why-row"><span>Profile connection</span><strong id="whyConnection">—</strong></div>
+            <div class="why-row"><span>Missing / uncertain</span><strong id="whyUncertainty">—</strong></div>
+          </div>
+
+          <div class="scan-conversation">
+            <span class="eyebrow">KEEP TALKING WITH HONEY</span>
+            <div id="scanConversationMessages" class="scan-conversation-messages"></div>
+            <div class="scan-followup-composer">
+              <input id="scanFollowupInput" placeholder="Tell Honey what happened or ask a follow-up…" />
+              <button id="scanFollowupSend" class="send-button" aria-label="Send follow-up">↑</button>
+            </div>
+          </div>
+
+          <div class="result-actions">
+            <button id="saveScanBtn" class="button button-soft">Save</button>
+            <button id="askHoneyBtn" class="button button-dark">Ask Honey</button>
+            <button id="logReactionFromScanBtn" class="button button-soft">Log reaction</button>
+          </div>
+          <p class="prototype-note">Honeycomb can organize evidence, product data, and your saved history. It does not diagnose a condition or guarantee that an exposure is safe.</p>
+        </section>
+      </article>
     </div>
-    <div class="hive-art" aria-hidden="true">
-      <div class="hex h1">KNOWN</div><div class="hex h2">SCAN</div><div class="hex h3">HISTORY</div>
-      <div class="hex h4">SUSPECT</div><div class="hex h5">AI</div><div class="hex h6">REPORT</div>
-    </div>
+
+    <dialog id="textScanDialog" class="app-dialog">
+      <form method="dialog" class="dialog-card">
+        <button class="dialog-close" value="cancel">×</button>
+        <span class="eyebrow">TEXT SCAN</span>
+        <h2>Paste what you can read</h2>
+        <p class="muted">Ingredients, menu description, material label, product details — anything useful.</p>
+        <textarea id="scanTextInput" class="dialog-textarea" placeholder="Paste text here..."></textarea>
+        <div class="dialog-actions"><button value="cancel" class="button button-soft">Cancel</button><button id="analyzeTextBtn" value="default" class="button button-dark">Analyze</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="reactionDialog" class="app-dialog">
+      <form method="dialog" class="dialog-card">
+        <button class="dialog-close" value="cancel">×</button>
+        <span class="eyebrow">REACTION JOURNAL</span>
+        <h2>What happened?</h2>
+        <label class="soft-field"><span>Your description</span><textarea id="reactionNote" placeholder="What did you notice? What had you eaten, touched, worn, or used recently?"></textarea></label>
+        <label class="soft-field"><span>Your tracking severity: <b id="severityValue">2</b>/5</span><input id="severityInput" type="range" min="1" max="5" value="2" /></label>
+        <label class="soft-field"><span>Recent exposure / product (optional)</span><input id="reactionExposure" placeholder="Product, food, plant, fabric..." /></label>
+        <div class="dialog-actions"><button value="cancel" class="button button-soft">Cancel</button><button id="saveReactionBtn" value="default" class="button button-dark">Save reaction</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="reportDialog" class="app-dialog report-dialog">
+      <article class="dialog-card report-card">
+        <div class="report-controls">
+          <button id="closeReportBtn" class="dialog-close" type="button">×</button>
+          <button id="printReportBtn" class="button button-dark compact" type="button">Print / Save PDF</button>
+        </div>
+        <div id="reportBody"></div>
+      </article>
+    </dialog>
   </div>
 
-  <div class="section-title"><h3>Quick scan</h3><span>one tap from real life</span></div>
-  <div id="quickGrid" class="quick-grid"></div>
-
-  <div class="grid2">
-    <article class="card">
-      <div class="card-head"><h3>Latest signals</h3><button class="link" data-view="journal">history</button></div>
-      <div id="recentScans" class="empty">No scans yet.</div>
-    </article>
-    <article class="card">
-      <div class="card-head"><h3>Your profile map</h3><button class="link" data-view="profile">edit</button></div>
-      <div id="profileMap"></div>
-    </article>
-  </div>
-</section>
-
-<section id="scan" class="view">
-  <div class="section-title"><div><p class="kicker">HONEYCOMB LIVE</p><h2>Scan what is in front of you</h2></div></div>
-  <div class="scan-grid">
-    <article class="card scanner">
-      <div id="modePills" class="pills"></div>
-      <label class="camera">
-        <input id="scanFile" type="file" accept="image/*" capture="environment"/>
-        <div id="cameraPreview"><b>Tap to take or upload a photo</b><small>label · food · menu · fabric · plant · flare-up</small></div>
-      </label>
-      <label>Optional text / ingredients / menu description
-        <textarea id="scanText" placeholder="Paste anything readable from the item..."></textarea>
-      </label>
-      <button id="analyzeBtn" class="btn primary full">Analyze against my profile</button>
-    </article>
-
-    <article id="resultCard" class="card result">
-      <p class="kicker">HONEYCOMB SIGNAL</p>
-      <h2>Waiting for a scan.</h2>
-      <p class="soft">Your result will explain what was found, what matched your profile, and how much evidence Honeycomb has.</p>
-    </article>
-  </div>
-</section>
-
-<section id="journal" class="view">
-  <div class="section-title"><div><p class="kicker">PATTERNS</p><h2>Scans & reaction journal</h2></div><button id="addReaction" class="btn secondary">+ reaction</button></div>
-  <div class="grid2">
-    <article class="card"><h3>Scan history</h3><div id="scanHistory" class="empty"></div></article>
-    <article class="card"><h3>Reaction journal</h3><div id="reactionHistory" class="empty"></div></article>
-  </div>
-</section>
-
-<section id="agent" class="view">
-  <div class="chat card">
-    <div class="card-head"><div><p class="kicker">HONEYCOMB AGENT</p><h2>Ask with your context</h2></div><button id="clearChat" class="link">clear</button></div>
-    <div id="messages" class="messages"></div>
-    <div class="composer">
-      <button id="micBtn" class="mic">🎙</button>
-      <textarea id="chatInput" placeholder="Ask about your scans, patterns, or appointment report..."></textarea>
-      <button id="sendBtn" class="btn primary">Send</button>
-    </div>
-    <small class="soft">Prototype agent uses only data saved in this browser. A secure AI backend can be connected later.</small>
-  </div>
-</section>
-
-<section id="profile" class="view">
-  <div class="section-title"><div><p class="kicker">PROFILE</p><h2>Your context, separated clearly</h2></div><button class="btn secondary" data-view="report">Appointment snapshot</button></div>
-  <div class="profile-grid">
-    <article class="card">
-      <h3>About you</h3>
-      <label>Name<input id="name"/></label>
-      <label>Background / synopsis<textarea id="synopsis" placeholder="What would you want the app or a clinician to understand?"></textarea></label>
-    </article>
-    <article class="card">
-      <h3>Known vs. suspected</h3>
-      <label>Known allergies<textarea id="known" placeholder="comma separated"></textarea></label>
-      <label>Suspected triggers<textarea id="suspected" placeholder="things still being investigated"></textarea></label>
-      <label>Personal avoid list<textarea id="avoid" placeholder="items you personally avoid"></textarea></label>
-      <label>Tolerated / known-good<textarea id="tolerated" placeholder="things you've tolerated before"></textarea></label>
-    </article>
-    <article class="card">
-      <h3>Records vault</h3>
-      <p class="soft">This public prototype does not upload medical files. It only stores the file name locally so you can demo the workflow.</p>
-      <label class="drop">+ Add allergy test, doctor record, image, or summary<input id="records" type="file" multiple/></label>
-      <div id="recordList"></div>
-    </article>
-    <article class="card">
-      <h3>Privacy controls</h3>
-      <div class="row"><span>Storage</span><b>this browser only</b></div>
-      <div class="row"><span>Medical diagnosis</span><b>not provided</b></div>
-      <button id="exportBtn" class="btn secondary full">Export my Honeycomb data</button>
-      <button id="eraseBtn" class="btn danger full">Erase local data</button>
-    </article>
-  </div>
-  <button id="saveProfile" class="btn primary">Save profile</button>
-</section>
-
-<section id="report" class="view">
-  <div class="section-title"><div><p class="kicker">APPOINTMENT SNAPSHOT</p><h2>Everything important right now</h2></div><button onclick="window.print()" class="btn primary">Print / Save PDF</button></div>
-  <article id="reportBody" class="card report"></article>
-</section>
-</main>
-
-<nav id="mobileNav" class="mobile-nav"></nav>
-</div>
-
-<dialog id="reactionDialog">
-<form method="dialog" class="dialog-card">
-  <h3>Log a reaction / flare-up</h3>
-  <label>What happened?<textarea id="reactionNote"></textarea></label>
-  <label>Your tracking severity (1–5)<input id="severity" type="range" min="1" max="5" value="2"/></label>
-  <div class="dialog-actions"><button class="btn secondary" value="cancel">Cancel</button><button id="saveReaction" class="btn primary" value="default">Save</button></div>
-</form>
-</dialog>
-<script src="app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>\n  <script src="app.js?v=24"></script>
 </body>
 </html>
